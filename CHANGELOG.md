@@ -2,6 +2,20 @@
 
 本文件遵循 [语义化版本 2.0.0](https://semver.org/lang/zh-CN/)（`主.次.修订`），并遵循 `VERSIONING.md` 的提交/发版/打 Tag 规范。新版本区块一律从顶部追加，不在历史版本上编辑。
 
+## [1.1.4] - 2026-09-01
+
+### 🐛 修复
+
+- **扫码后点「我已扫码，获取Cookie」提示未读取到登录**：
+  - 根因：登录态检测与 Cookie 提取原先依赖 `document.cookie`，而微博登录凭证（SUB/gsid）可能是 HttpOnly，`document.cookie` 读不到 → 被误判为"未登录/无有效 Cookie"，进入确认时的校验失败
+  - 修复：新增 `_all_cookies()`，优先 `Network.enable` + `Network.getAllCookies` 读取（**能拿到 HttpOnly 凭证**），失败才回退 `document.cookie`；登录态判定改为基于是否含 SUB/SUBSCRIBE/gsid；`Network.enable` 一次性初始化
+  - 附带：确认接口增加明确的登录态校验，未检测到登录时给出可操作提示（确认手机已扫码并点击「确认登录」）
+  - 验证：headless 下 `_all_cookies` 可读到 `X-CSRF-TOKEN`（HttpOnly），证明 Network 读取路径正常；登录前 `has_auth_cookie=False`
+
+### 📝 关键经验
+
+- 读取浏览器 Cookie 优先走 CDP `Network.getAllCookies`（含 HttpOnly），切勿依赖 `document.cookie`（对 HttpOnly 无可见性）
+
 ## [1.1.3] - 2026-09-01
 
 ### 🐛 修复

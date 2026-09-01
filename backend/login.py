@@ -55,7 +55,7 @@ QR_CACHE_DIR = WORKSPACE_DIR / "qr_cache"
 BROWSER_DATA_DIR = WORKSPACE_DIR.parent / ".weibo_browser_profiles"
 
 TTL = 180  # 会话有效期（秒）
-_LOGIN_COOKIES = ("SUB", "SUBSCRIBE")
+_LOGIN_COOKIES = ("SUB", "SUBSCRIBE", "gsid")
 
 # 提取二维码图片 src 的 JS：尝试多种容器/特征
 _QR_EXTRACT_JS = r"""(() => {
@@ -395,16 +395,49 @@ def _capture_qr(page: CdpSession, qr_png: Path) -> Optional[str]:
     return None
 
 
+def _all_cookies(page: CdpSession) -> Dict[str, str]:
+    """优先用 Network.getAllCookies 读取（含 HttpOnly 凭证），失败回退 document.cookie。"""
+    try:
+        page.call("Network.enable")
+    except Exception:
+        pass
+    try:
+        res = page.call("Network.getAllCookies")
+        cookies = {
+            c["name"]: c.get("value", "")
+            for c in res.get("cookies", [])
+            if c.get("name")
+        }
+        if "SUB" in cookies or "gsid" in cookies or "SUBSCRIBE" in cookies:
+            return cookies
+    except Exception:
+        pass
+    # 兜底：当前页面 document.cookie
+    cookies = {}
+    try:
+        for item in (page.eval("document.cookie || ''") or "").split(";"):
+            if "=" in item:
+                k, _, v = item.strip().partition("=")
+                cookies[k.strip()] = v.strip()
+    except Exception:
+        pass
+    return cookies
+
+
+def _has_auth_cookie(cookies: Dict[str, str]) -> bool:
+    return any(k in cookies for k in _LOGIN_COOKIES)
+
+
 def _browser_logged_in(page: CdpSession) -> bool:
     try:
-        cookie_str = page.eval("document.cookie || ''", timeout=5)
-        if cookie_str and any(k in cookie_str for k in _LOGIN_COOKIES):
+        if _has_auth_cookie(_all_cookies(page)):
             return True
     except Exception:
         pass
     try:
         url = page.eval("location.href || ''", timeout=5) or ""
         if url and "passport.weibo" not in url and "passport.sina" not in url:
+            # 已离开登录页视为登录成功（凭证可能为 HttpOnly，无法以 document.cookie 读取）
             return True
     except Exception:
         pass
@@ -412,25 +445,10 @@ def _browser_logged_in(page: CdpSession) -> bool:
 
 
 def _extract_cookies(page: CdpSession) -> Dict[str, str]:
-    cookies: Dict[str, str] = {}
-    try:
-        result = page.call("Network.getAllCookies")
-        for c in result.get("cookies", []):
-            if c.get("name"):
-                cookies[c["name"]] = c.get("value", "")
-    except Exception:
-        # 兜底：从当前页面 document.cookie 取
-        try:
-            for item in (page.eval("document.cookie || ''") or "").split(";"):
-                if "=" in item:
-                    k, _, v = item.strip().partition("=")
-                    cookies[k.strip()] = v.strip()
-        except Exception:
-            pass
+    cookies = _all_cookies(page)
     cookies.setdefault("MLOGIN", "1")
-    cookies.setdefault("XSRF-TOKEN", "")
-    if not cookies:
-        raise QrLoginError("浏览器内未读取到有效 Cookie，请重试扫码")
+    if not _has_auth_cookie(cookies):
+        raise QrLoginError("未读取到有效微博登录 Cookie（缺少 SUB/gsid 凭证），请重试扫码")
     return cookies
 
 
@@ -505,6 +523,11 @@ class QrLoginManager:
         page = sess.get("page")
         if page is None:
             raise QrLoginError("浏览器已关闭，请重新发起扫码")
+        if not _browser_logged_in(page):
+            raise QrLoginError(
+                "尚未在浏览器中检测到登录成功，请确认手机微博 App 已扫码并在手机上"
+                "点击「确认登录」，等浏览器跳转后再试"
+            )
         cookies = _extract_cookies(page)
         return {"ok": True, "cookies": cookies}
 
