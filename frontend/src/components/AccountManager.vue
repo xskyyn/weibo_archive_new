@@ -67,7 +67,7 @@
       <el-tab-pane label="扫码登录" name="qr">
         <template v-if="!qr.sid">
           <el-alert type="warning" :closable="false" class="mb">
-            点击后将在本机弹出浏览器登录窗口（DrissionPage 驱动，需安装 Chrome/Edge）。
+            点击后将在本机弹出浏览器登录窗口（原生 CDP 驱动本机 Chrome/Edge）。
             使用手机微博 App 扫码并确认即可完成登录。
           </el-alert>
           <el-button type="primary" :loading="qr.starting" @click="startQr">开始扫码登录</el-button>
@@ -89,6 +89,15 @@
               {{ qr.state === 'confirmed' ? '完成登录' : '我已扫码，获取Cookie' }}
             </el-button>
             <el-button size="small" @click="cancelQr">取消</el-button>
+          </div>
+          <div class="privacy-note mt">
+            <div class="privacy-title">🔒 隐私与安全说明</div>
+            <ul>
+              <li><b>数据仅存本地</b>：您的微博账号信息（Cookie、UID、昵称等）仅保存在您的本地设备中，不会上传至任何第三方服务器。</li>
+              <li><b>安全可靠</b>：本工具通过浏览器原生协议（CDP）完成登录流程，不经过任何中间服务器，与您在浏览器中正常登录微博无异。</li>
+              <li><b>自主可控</b>：您可随时在「账号管理」中退出登录，一键清除所有登录态数据。</li>
+            </ul>
+            <div class="privacy-agree">扫码即表示您已了解并同意上述说明。</div>
           </div>
         </template>
       </el-tab-pane>
@@ -292,6 +301,32 @@ onBeforeUnmount(clearQrTimer)
 }
 .qr-img { width: 220px; height: 220px; }
 .qr-status { display: flex; align-items: center; gap: 10px; }
+.privacy-note {
+  background: #fffdf5;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #374151;
+  text-align: left;
+}
+.privacy-title {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: #111827;
+}
+.privacy-note ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.privacy-note li { margin-bottom: 2px; }
+.privacy-agree {
+  margin-top: 8px;
+  font-weight: 600;
+  color: #111827;
+}
 .target-row { display: flex; gap: 10px; }
 .target-info { color: #6b7280; }
 </style>

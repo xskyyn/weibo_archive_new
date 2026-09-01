@@ -72,6 +72,50 @@ _QR_EXTRACT_JS = r"""(() => {
 })()
 """
 
+# 扫码弹窗自定义隐私与安全提示（替换浏览器窗口中的占位文本）
+_PLACEHOLDER_MARKERS = (
+    "This Space Intentionally Blank",
+    "This space intentionally",
+    "In official builds this space",
+)
+_PRIVACY_HTML = (
+    '<div style="font-family:\'Microsoft YaHei\',sans-serif;max-width:360px;'
+    "margin:0 auto;padding:16px;background:#ffffff;border:1px solid #e5e7eb;"
+    "border-radius:8px;color:#111827;font-size:13px;line-height:1.7\">"
+    '<div style="font-weight:700;font-size:14px;margin-bottom:8px">🔒 隐私与安全说明</div>'
+    "<ul style=\"margin:0;padding-left:18px\">"
+    "<li><b>数据仅存本地</b>：您的微博账号信息（Cookie、UID、昵称等）仅保存在您的本地设备中，不会上传至任何第三方服务器。</li>"
+    "<li><b>安全可靠</b>：本工具通过浏览器原生协议（CDP）完成登录流程，不经过任何中间服务器，与您在浏览器中正常登录微博无异。</li>"
+    "<li><b>自主可控</b>：您可随时在「账号管理」中退出登录，一键清除所有登录态数据。</li>"
+    "</ul>"
+    '<div style="margin-top:8px">扫码即表示您已了解并同意上述说明。</div>'
+    "</div>"
+)
+# 注入 JS：遍历 DOM 文本节点，找到占位文本并替换为自定义提示
+_INJECT_PRIVACY_JS = r"""(() => {
+  const markers = window.__WBAR_MARKERS__ || [];
+  const nodes = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let n;
+  while ((n = walker.nextNode())) {
+    const v = n.nodeValue || '';
+    if (markers.some(m => v.indexOf(m) !== -1)) nodes.push(n);
+  }
+  if (!nodes.length) return { injected: false };
+  const el = document.createElement('div');
+  el.innerHTML = window.__WBAR_PRIVACY__ || '';
+  nodes.forEach((tn, i) => {
+    if (i === 0 && tn.parentNode) {
+      tn.parentNode.replaceChild(el.cloneNode(true), tn);
+    } else if (tn.parentNode) {
+      tn.parentNode.parentNode &&
+        tn.parentNode.parentNode.removeChild(tn.parentNode);
+    }
+  });
+  return { injected: true, found: nodes.length };
+})()
+"""
+
 
 class QrLoginError(Exception):
     pass
@@ -260,6 +304,18 @@ def _navigate(page: CdpSession, url: str) -> None:
         time.sleep(0.5)
 
 
+def _inject_privacy(page: CdpSession) -> bool:
+    """在浏览器登录页注入自定义隐私/安全提示，替换占位文本。返回是否执行成功。"""
+    try:
+        page.eval("window.__WBAR_MARKERS__ = " + json.dumps(list(_PLACEHOLDER_MARKERS)))
+        page.eval("window.__WBAR_PRIVACY__ = " + json.dumps(_PRIVACY_HTML))
+        res = page.eval(_INJECT_PRIVACY_JS, timeout=5)
+        return bool(res and res.get("injected"))
+    except Exception as e:
+        logger.warning("隐私提示注入失败（不影响扫码）：%s", e)
+        return False
+
+
 def _capture_qr(page: CdpSession, qr_png: Path) -> Optional[str]:
     """提取二维码图片写入 qr_png，返回 /media/ 相对地址；失败返回 None。"""
     qr_png.parent.mkdir(parents=True, exist_ok=True)
@@ -371,6 +427,7 @@ class QrLoginManager:
         page, _proc, _port, _profile = _start_browser()
         try:
             _navigate(page, LOGIN_URL)
+            _inject_privacy(page)
         except Exception as e:
             self.drop(sid)
             raise QrLoginError(f"打开登录页失败：{e}")
