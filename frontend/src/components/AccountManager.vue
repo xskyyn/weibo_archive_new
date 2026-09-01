@@ -73,16 +73,11 @@
           <el-button type="primary" :loading="qr.starting" @click="startQr">开始扫码登录</el-button>
         </template>
         <template v-else>
-          <div class="qr-box">
-            <template v-if="qr.img">
-              <img :src="qr.img" alt="二维码" class="qr-img" />
-            </template>
-            <template v-else>
-              <el-empty description="二维码未捕获：请在已弹出的浏览器窗口中直接扫码">
-                <el-button @click="refreshQrImg">刷新截图</el-button>
-              </el-empty>
-            </template>
-          </div>
+          <el-alert type="info" :closable="false" class="mb">
+            已在本机弹出浏览器登录窗口（passport.weibo.com）。
+            请<strong>在弹出的浏览器窗口中用手机微博 App 扫码并点「确认登录」</strong>，
+            登录成功后点击下方按钮完成 Cookie 抓取。
+          </el-alert>
           <div class="qr-status mt">
             <el-tag :type="qr.state === 'confirmed' ? 'success' : 'primary'">{{ qr.msg }}</el-tag>
             <el-button size="small" :loading="qr.confirming" @click="confirmQr">
@@ -174,11 +169,6 @@ async function startQr() {
   } finally {
     qr.starting = false
   }
-}
-async function refreshQrImg() {
-  // 重新请求状态（后端保留浏览器引用），并重试刷新二维码截图地址
-  const res: any = await qrStatus(qr.sid)
-  if (res.ok && res.qr_url) qr.img = res.qr_url
 }
 async function pollQr() {
   clearQrTimer()
