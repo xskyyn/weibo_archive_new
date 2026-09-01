@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# 运行时数据
+workspace/
+cookie.json
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# 导出产物
+*.zip
+posts.json

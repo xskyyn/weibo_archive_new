@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }} - 微博归档</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+         max-width: 720px; margin: 0 auto; padding: 24px; background: #fafafa; color: #222; }
+  h1 { font-size: 24px; border-bottom: 2px solid #e6162d; padding-bottom: 12px; }
+  .post { background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 16px 18px;
+          margin: 16px 0; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  .meta { color: #999; font-size: 13px; margin-bottom: 10px; }
+  .text { line-height: 1.7; word-break: break-word; }
+  .media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .media img, .media video { max-width: 100%; border-radius: 6px; }
+  .media video { display: block; }
+  .counts { color: #999; font-size: 13px; margin-top: 10px; }
+  .comments { margin-top: 12px; border-top: 1px dashed #eee; padding-top: 10px; }
+  .comment { color: #444; font-size: 14px; line-height: 1.6; margin: 6px 0; }
+  .comment .cname { color: #e6162d; margin-right: 6px; }
+  img { max-width: 100%; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #151515; color: #ddd; }
+    .post { background: #1e1e1e; border-color: #333; }
+    .meta, .counts, .comment { color: #aaa; }
+    .comment .cname { color: #ff6b81; }
+  }
+</style>
+</head>
+<body>
+<h1>{{ title }}</h1>
+<p class="meta">导出时间：{{ generated }}</p>
+{% for p in posts %}
+<div class="post">
+  <div class="meta">
+    <b>{{ p.user.screen_name }}</b>&nbsp;·&nbsp;{{ p.created_at }}
+  </div>
+  <div class="text">{{ p.text }}</div>
+  {% if p.media %}
+  <div class="media">
+    {% for m in p.media %}
+      {% if m.type == 'pic' %}<img src="{{ m.local_path }}" alt="图片">
+      {% elif m.type in ('video', 'livephoto') %}<video controls src="{{ m.local_path }}"></video>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="counts">转发 {{ p.reposts_count }} · 评论 {{ p.comments_count }} · 赞 {{ p.attitudes_count }}</div>
+  {% if p.comments %}
+  <div class="comments">
+    {% for c in p.comments %}
+    <div class="comment"><span class="cname">{{ c.user.screen_name }}：</span>{{ c.text }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+</body>
+</html>
