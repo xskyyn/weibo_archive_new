@@ -73,10 +73,10 @@ _QR_EXTRACT_JS = r"""(() => {
 """
 
 # 扫码弹窗自定义隐私与安全提示（替换浏览器窗口中的占位文本）
+# 微博 passport 页面占位文本为小写且分两行，匹配忽略大小写、用特征短语（避免误伤真实内容）
 _PLACEHOLDER_MARKERS = (
-    "This Space Intentionally Blank",
-    "This space intentionally",
-    "In official builds this space",
+    "this space intentionally",
+    "in official builds this space",
 )
 _PRIVACY_HTML = (
     '<div style="font-family:\'Microsoft YaHei\',sans-serif;max-width:360px;'
@@ -91,28 +91,39 @@ _PRIVACY_HTML = (
     '<div style="margin-top:8px">扫码即表示您已了解并同意上述说明。</div>'
     "</div>"
 )
-# 注入 JS：遍历 DOM 文本节点，找到占位文本并替换为自定义提示
+# 注入 JS（幂等 + 多 frame 递归）：遍历各文档文本节点，将占位文本替换为自定义提示；
+# 占位文本可能位于 iframe（passport.weibo.com 登录框），且大小写不定，匹配忽略大小写
 _INJECT_PRIVACY_JS = r"""(() => {
-  const markers = window.__WBAR_MARKERS__ || [];
-  const nodes = [];
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  let n;
-  while ((n = walker.nextNode())) {
-    const v = n.nodeValue || '';
-    if (markers.some(m => v.indexOf(m) !== -1)) nodes.push(n);
-  }
-  if (!nodes.length) return { injected: false };
-  const el = document.createElement('div');
-  el.innerHTML = window.__WBAR_PRIVACY__ || '';
-  nodes.forEach((tn, i) => {
-    if (i === 0 && tn.parentNode) {
-      tn.parentNode.replaceChild(el.cloneNode(true), tn);
-    } else if (tn.parentNode) {
-      tn.parentNode.parentNode &&
-        tn.parentNode.parentNode.removeChild(tn.parentNode);
+  const markers = (window.__WBAR_MARKERS__ || []).map(m => m.toLowerCase());
+  let replaced = 0;
+  function processRoot(doc) {
+    if (!doc || !doc.body || doc.getElementById('wbar-privacy-panel')) return;
+    const nodes = [];
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = walker.nextNode())) {
+      const v = (n.nodeValue || '').toLowerCase();
+      if (markers.some(m => v.indexOf(m) !== -1)) nodes.push(n);
     }
-  });
-  return { injected: true, found: nodes.length };
+    nodes.forEach((tn) => {
+      replaced++;
+      if (tn.parentNode) {
+        if (replaced === 1) {
+          const el = doc.createElement('div');
+          el.id = 'wbar-privacy-panel';
+          el.innerHTML = window.__WBAR_PRIVACY__ || '';
+          tn.parentNode.replaceChild(el, tn);
+        } else {
+          tn.nodeValue = '';
+        }
+      }
+    });
+    Array.from(doc.querySelectorAll('iframe')).forEach(f => {
+      try { if (f.contentDocument) processRoot(f.contentDocument); } catch (e) {}
+    });
+  }
+  processRoot(document);
+  return { injected: replaced > 0, replaced };
 })()
 """
 
@@ -432,6 +443,11 @@ class QrLoginManager:
             self.drop(sid)
             raise QrLoginError(f"打开登录页失败：{e}")
         qr_url = _capture_qr(page, qr_png)
+        # 重定向/风控页渲染后可能晚出占位文本，幂等再注入一次
+        try:
+            _inject_privacy(page)
+        except Exception:
+            pass
         self._sessions[sid] = {
             "sid": sid, "page": page, "qr_url": qr_url,
             "qr_in_browser": qr_url is None, "state": "wait", "created": time.time(),

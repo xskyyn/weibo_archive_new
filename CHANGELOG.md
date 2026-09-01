@@ -2,6 +2,21 @@
 
 本文件遵循 [语义化版本 2.0.0](https://semver.org/lang/zh-CN/)（`主.次.修订`），并遵循 `VERSIONING.md` 的提交/发版/打 Tag 规范。新版本区块一律从顶部追加，不在历史版本上编辑。
 
+## [1.1.2] - 2026-09-01
+
+### 🐛 修复
+
+- **扫码隐私提示在真实浏览器中未生效，仍显示占位文本**：
+  - 根因一（主因）：微博 passport 页面占位文本为小写（"This space intentionally blank"），而 v1.1.1 注入匹配标记为大写且大小写敏感，直接脱靶
+  - 根因二：该占位可能位于登录 iframe（passport.weibo.com 登录框）内，而 v1.1.1 仅遍历顶层 `document.body`
+  - 修复：`backend/login.py` 注入改为**忽略大小写**匹配特征短语（`this space intentionally` / `in official builds this space`），并对**顶层文档 + 全部同源 iframe 递归遍历**；同时调整为幂等（`#wbar-privacy-panel` 哨兵），并在二维码捕获后再注入一次兜底
+  - 验证：headless 注入实测 `replaced:2`（顶层替换为提示面板、iframe 内占位被清除），且重复注入不产生重复内容
+
+### 📝 关键经验
+
+- 跨站文案注入不要假设目标文本的大小写；匹配一律 `toLowerCase` 做包含判断
+- 页面登录表单若可能位于 iframe，注入逻辑必须能递归进入 `iframe.contentDocument`（同源），否则静默脱靶
+
 ## [1.1.1] - 2026-09-01
 
 ### 🎨 样式/UI
