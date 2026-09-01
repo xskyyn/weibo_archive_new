@@ -88,7 +88,7 @@ SEARCH_PAGE_SIZE = 20
 # 其他
 # ---------------------------------------------------------------------------
 APP_TITLE = "WeiboArchive 微博归档工具"
-VERSION = "1.1.6"
+VERSION = "1.1.7"
 
 
 def resolve_port(start: int = PORT, try_n: int = 20) -> int:

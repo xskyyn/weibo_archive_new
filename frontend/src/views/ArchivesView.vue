@@ -62,8 +62,13 @@ const commentCount = ref(0)
 
 const scrollRef = ref<HTMLDivElement>()
 
+// 递增请求序号：丢弃过期/乱序响应，避免 watch 与显式调用竞态覆盖列表
+let _searchSeq = 0
+
 async function doSearch(loadMore = false) {
-  if (!loadMore) {
+  const more = loadMore === true // 防止 @click/@keyup 传入 Event 对象被当作 truthy
+  const reqId = ++_searchSeq
+  if (!more) {
     page.value = 1
     posts.value = []
     finished.value = false
@@ -72,6 +77,7 @@ async function doSearch(loadMore = false) {
   try {
     if (keyword.value.trim()) {
       const r = await searchPosts({ keyword: keyword.value.trim(), page: page.value, page_size: 20 })
+      if (reqId !== _searchSeq) return // 已有更新的请求，丢弃过期响应
       posts.value.push(...r.items)
       total.value = r.total
     } else {
@@ -82,16 +88,22 @@ async function doSearch(loadMore = false) {
         page: page.value,
         page_size: 20,
       })
+      if (reqId !== _searchSeq) return
       posts.value.push(...r.items)
       total.value = r.total
     }
     if (posts.value.length >= total.value) finished.value = true
+  } catch (e) {
+    if (reqId !== _searchSeq) return
+    console.error('加载微博失败', e)
+    finished.value = true
   } finally {
-    loading.value = false
+    if (reqId === _searchSeq) loading.value = false
   }
 }
 
 function resetFilters() {
+  keyword.value = ''
   year.value = undefined
   month.value = undefined
   hasMedia.value = undefined
