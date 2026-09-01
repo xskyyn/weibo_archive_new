@@ -256,6 +256,13 @@ def _start_browser() -> tuple:
         "--disable-gpu",
         "--no-sandbox",
         "--disable-dev-shm-usage",
+        # 用全新 profile 启动时抑制 Edge/Chrome 自带的首启·附加条款·欢迎页，
+        # 避免弹出 "This space intentionally blank" 占位框与登录页并存
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-networking",
+        "--disable-sync",
+        "--disable-features=msEdgeFirstRunExperience,msEdgeFirstRunExperienceOptIn",
     ]
     if _HEADLESS:
         cmd.append("--headless=new")
@@ -287,6 +294,23 @@ def _start_browser() -> tuple:
     except Exception as e:
         _terminate_browser(proc)
         raise QrLoginError(f"连接浏览器失败：{e}")
+
+    # 关闭其它多余的 page 标签（如首启/附加条款页），只保留即将导航的登录页
+    try:
+        tabs = json.loads(urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/json", timeout=1).read())
+        for t in tabs:
+            if t.get("type") == "page" and t.get("webSocketDebuggerUrl") != page_ws:
+                tid = t.get("id")
+                if tid:
+                    try:
+                        urllib.request.urlopen(
+                            f"http://127.0.0.1:{port}/json/close/{tid}", timeout=1).read()
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
     page._launcher_proc = proc
     page._launcher_port = port
     page._launcher_profile = profile
@@ -304,6 +328,10 @@ def _set_headless(flag: bool = True) -> None:
 # ---------------------------------------------------------------------------
 def _navigate(page: CdpSession, url: str) -> None:
     page.call("Page.navigate", {"url": url}, timeout=30)
+    try:
+        page.call("Page.bringToFront")
+    except Exception:
+        pass
     # 等待页面基本加载
     for _ in range(40):
         try:

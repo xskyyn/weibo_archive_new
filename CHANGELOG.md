@@ -2,6 +2,19 @@
 
 本文件遵循 [语义化版本 2.0.0](https://semver.org/lang/zh-CN/)（`主.次.修订`），并遵循 `VERSIONING.md` 的提交/发版/打 Tag 规范。新版本区块一律从顶部追加，不在历史版本上编辑。
 
+## [1.1.3] - 2026-09-01
+
+### 🐛 修复
+
+- **扫码弹窗出现 Edge 自带的"附加条款"占位页**：
+  - 根因：用全新的 `--user-data-dir` profile 启动 Edge/Chrome 时，浏览器会自行弹出首启·附加条款页（页面上的 "This space intentionally blank / In official builds this space will show the terms of service." 占位框即来自该页，而非微博页；此前注入微博 DOM 自然无效）
+  - 修复：`backend/login.py` 启动参数增加 `--no-first-run`、`--no-default-browser-check`、`--disable-background-networking`、`--disable-sync`、`--disable-features=msEdgeFirstRunExperience,msEdgeFirstRunExperienceOptIn`，抑制首启/附加条款/欢迎页；连接调试端口后关闭其余多余 page 标签、将微博登录页 `Page.bringToFront`
+  - 验证：headless 启动后仅剩 1 个 page 标签且 URL 为 `passport.weibo.com/sso/signin`
+
+### 📝 关键经验
+
+- 无头/可控浏览器启动务必带上 `--no-first-run` 等参数，否则新 profile 会叠加浏览器自带首启页，干扰自动化目标与 DOM 注入
+
 ## [1.1.2] - 2026-09-01
 
 ### 🐛 修复
