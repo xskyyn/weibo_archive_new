@@ -7,6 +7,9 @@ __pycache__/
 # 运行时数据
 workspace/
 cookie.json
+logs/
+.weibo_browser_profiles/
+qr_cache/
 
 # 前端
 frontend/node_modules/

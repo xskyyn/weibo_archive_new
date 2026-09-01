@@ -1,145 +1,442 @@
-"""纯 httpx 扫码登录（passport.weibo.cn SSO），无需浏览器。
+"""原生 CDP 扫码登录：外部启动 Edge + websocket CDP，无需 DrissionPage。
 
-流程：
-  1. qrcode/show  获取二维码图片 + qrid
-  2. qrcode/scan  轮询，直到用户确认(20000)拿到 alt 授权码
-  3. sso/login     用 alt 换取登录 Cookie(SUB/SUBP 等) 与 uid
+背景：新浪已收紧匿名 SSO 接口，纯 httpx 无法取到二维码；而 DrissionPage 4.1 与本机
+Edge 152 存在兼容缺陷（初始化会对同一 /devtools/browser/<id> 建第二条 ws 被 404 拒绝）。
+经实测，原生 CDP websocket 连接稳定，故本模块直接用 websocket-client 实现 CDP 控制：
 
-注意：新浪接口偶有调整，真机验证时如返回异常可据此微调。
+  1. start()   外部启动 Edge(指定调试端口+专属 profile)，导航到微博扫码登录页，
+                用 Runtime.evaluate 提取二维码 <img>（data:image 或 URL）生成 PNG 回传前端
+  2. status()  轮询 document.cookie 是否出现 SUB（登录成功）
+  3. confirm() 登录成功后用 Network.getAllCookies 导出 Cookie，交账号管理保存并关停浏览器
+
+本模块接口与 QrLoginManager 保持：start/status/confirm/drop_session，端侧代码无需改动。
 """
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
+import os
+import shutil
+import socket
+import subprocess
+import threading
 import time
+import urllib.request
 import uuid
-from typing import Dict, Optional
+from concurrent.futures import Future
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-import httpx
-
+from backend.config import WORKSPACE_DIR
 from backend.utils.logger import get_logger
 
 logger = get_logger("weibo.login")
 
-PASSPORT = "https://passport.weibo.cn/sso"
-_TIMEOUT = httpx.Timeout(20.0, connect=10.0)
+# 全局开关：测试用 headless（生产/桌面默认有头，供用户扫码）
+_HEADLESS = False
 
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36 Edg/152.0.0.0"
     ),
-    "Referer": "https://passport.weibo.cn/signin/login",
+    "Referer": "https://m.weibo.cn/",
     "Accept": "application/json, text/plain, */*",
 }
+
+# 微博移动端扫码登录页
+LOGIN_URL = (
+    "https://passport.weibo.cn/signin/login?entry=mweibo&res=wel&wm=3349"
+    "&r=https%3A%2F%2Fm.weibo.cn"
+)
+QR_CACHE_DIR = WORKSPACE_DIR / "qr_cache"
+# 浏览器用户数据目录（内含登录 Cookie），放在非静态服务目录之外，避免被 /media 路由暴露
+BROWSER_DATA_DIR = WORKSPACE_DIR.parent / ".weibo_browser_profiles"
+
+TTL = 180  # 会话有效期（秒）
+_LOGIN_COOKIES = ("SUB", "SUBSCRIBE")
+
+# 提取二维码图片 src 的 JS：尝试多种容器/特征
+_QR_EXTRACT_JS = r"""(() => {
+  const imgs = Array.from(document.querySelectorAll('img'));
+  const hit = imgs.find(im => {
+    const s = (im.src || '');
+    const alt = (im.alt || '');
+    const cls = (im.className || '') + ' ' + (im.id || '');
+    return /qrcode|qr_code|qrimg|qrcodeimg/i.test(alt + ' ' + cls)
+      || (s.startsWith('data:image') && s.length > 500)
+      || /qrcode|qrlogin|qr\/|qrcoderemind|\/qr\//i.test(s);
+  });
+  return hit ? { src: hit.src } : { src: '' };
+})()
+"""
 
 
 class QrLoginError(Exception):
     pass
 
 
-class QrLoginManager:
-    """管理进行中的扫码登录会话（内存态，带超时清理）。"""
+# ---------------------------------------------------------------------------
+# 极简 CDP 会话：JSON-RPC over websocket（同步请求 + 后台接收线程）
+# ---------------------------------------------------------------------------
+class CdpSession:
+    def __init__(self, ws_url: str):
+        import websocket
 
-    def __init__(self):
+        self._ws = websocket.create_connection(
+            ws_url, timeout=30, enable_multithread=True, suppress_origin=True
+        )
+        self._seq = 0
+        self._lock = threading.Lock()
+        self._pending: Dict[int, Future] = {}
+        self._reader = threading.Thread(target=self._recv_loop, daemon=True)
+        self._reader.start()
+
+    def _recv_loop(self) -> None:
+        while True:
+            try:
+                msg = json.loads(self._ws.recv())
+            except Exception:
+                break
+            if isinstance(msg, dict) and "id" in msg:
+                fut = self._pending.pop(msg["id"], None)
+                if fut and not fut.done():
+                    fut.set_result(msg)
+
+    def call(self, method: str, params: Optional[dict] = None, timeout: int = 30) -> dict:
+        with self._lock:
+            self._seq += 1
+            mid = self._seq
+            fut: Future = Future()
+            self._pending[mid] = fut
+            self._ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+        res = fut.result(timeout)
+        if "error" in res:
+            raise QrLoginError(f"CDP {method} 失败: {res['error']}")
+        return res.get("result", {})
+
+    def eval(self, expression: str, timeout: int = 30) -> Any:
+        res = self.call(
+            "Runtime.evaluate",
+            {"expression": expression, "returnByValue": True, "awaitPromise": True},
+            timeout=timeout,
+        )
+        exc = res.get("exceptionDetails")
+        if exc:
+            raise QrLoginError(f"JS 执行失败: {exc.get('text', '')} {exc.get('exception')}")
+        value = res.get("result", {}).get("value")
+        return json.loads(value) if isinstance(value, str) and _is_json(value) else value
+
+    def close(self) -> None:
+        try:
+            self._ws.close()
+        except Exception:
+            pass
+
+
+def _is_json(s: str) -> bool:
+    try:
+        json.loads(s)
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# 浏览器启动
+# ---------------------------------------------------------------------------
+def _find_browser() -> str:
+    """探测本机可用浏览器（Chrome/Edge 常见路径），找不到返回空串。"""
+    candidates = [
+        "google-chrome", "chromium", "chromium-browser", "microsoft-edge", "msedge",
+    ]
+    for c in candidates:
+        p = shutil.which(c)
+        if p:
+            return p
+    for c in [
+        "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser",
+        "/usr/bin/microsoft-edge", "/opt/google/chrome/chrome",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+        "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+        "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+    ]:
+        if Path(c).exists():
+            return c
+    return ""
+
+
+def _terminate_browser(proc) -> None:
+    import signal
+
+    try:
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=5)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _start_browser() -> tuple:
+    """外部启动 Edge/Chrome，返回 (CdpSession, proc, port, profile)。"""
+    browser = _find_browser()
+    if not browser:
+        raise QrLoginError("未探测到 Chrome/Edge，无法进行扫码登录。")
+
+    profile = BROWSER_DATA_DIR / uuid.uuid4().hex[:16]
+    profile.mkdir(parents=True, exist_ok=True)
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    cmd = [
+        browser,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={profile}",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+    ]
+    if _HEADLESS:
+        cmd.append("--headless=new")
+    cmd.append("about:blank")
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True)
+
+    # 等待产生一个 page 标签并拿到其 ws 地址
+    page_ws = None
+    for _ in range(40):
+        try:
+            tabs = json.loads(urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/json", timeout=1).read())
+            for t in tabs:
+                if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
+                    page_ws = t["webSocketDebuggerUrl"]
+                    break
+        except Exception:
+            pass
+        if page_ws:
+            break
+        time.sleep(0.5)
+    if not page_ws:
+        _terminate_browser(proc)
+        raise QrLoginError("浏览器启动超时，无法建立调试连接。")
+
+    try:
+        page = CdpSession(page_ws)
+    except Exception as e:
+        _terminate_browser(proc)
+        raise QrLoginError(f"连接浏览器失败：{e}")
+    page._launcher_proc = proc
+    page._launcher_port = port
+    page._launcher_profile = profile
+    return page, proc, port, profile
+
+
+def _set_headless(flag: bool = True) -> None:
+    """测试用：设置是否以 headless 方式启动浏览器。"""
+    global _HEADLESS
+    _HEADLESS = flag
+
+
+# ---------------------------------------------------------------------------
+# 扫码页操作
+# ---------------------------------------------------------------------------
+def _navigate(page: CdpSession, url: str) -> None:
+    page.call("Page.navigate", {"url": url}, timeout=30)
+    # 等待页面基本加载
+    for _ in range(40):
+        try:
+            val = page.eval("document.readyState || ''")
+            if val == "complete":
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+
+def _capture_qr(page: CdpSession, qr_png: Path) -> Optional[str]:
+    """提取二维码图片写入 qr_png，返回 /media/ 相对地址；失败返回 None。"""
+    qr_png.parent.mkdir(parents=True, exist_ok=True)
+    # 等待二维码出现（登录页二维码常需 1~3s 渲染）
+    src = None
+    for _ in range(15):
+        try:
+            src = page.eval(_QR_EXTRACT_JS, timeout=5)
+            if src and src.get("src"):
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+    if src and src.get("src"):
+        img_src = src["src"]
+        try:
+            if img_src.startswith("data:"):
+                b64 = img_src.split(",", 1)[1]
+                qr_png.write_bytes(base64.b64decode(b64))
+            else:
+                # 非 data URL 则原样下载
+                url = img_src if img_src.startswith("http") else f"https:{img_src}"
+                req = urllib.request.Request(url, headers=_HEADERS)
+                qr_png.write_bytes(urllib.request.urlopen(req, timeout=15).read())
+            if qr_png.exists() and qr_png.stat().st_size > 200:
+                return "/media/" + qr_png.relative_to(WORKSPACE_DIR).as_posix()
+        except Exception as e:
+            logger.warning("二维码图片获取失败：%s", e)
+    # 兜底：整页截图
+    try:
+        res = page.call("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": True})
+        if res.get("data"):
+            qr_png.write_bytes(base64.b64decode(res["data"]))
+            if qr_png.exists() and qr_png.stat().st_size > 200:
+                return "/media/" + qr_png.relative_to(WORKSPACE_DIR).as_posix()
+    except Exception as e:
+        logger.warning("整页截图失败：%s", e)
+    return None
+
+
+def _browser_logged_in(page: CdpSession) -> bool:
+    try:
+        cookie_str = page.eval("document.cookie || ''", timeout=5)
+        if cookie_str and any(k in cookie_str for k in _LOGIN_COOKIES):
+            return True
+    except Exception:
+        pass
+    try:
+        url = page.eval("location.href || ''", timeout=5) or ""
+        if url and "passport.weibo" not in url and "passport.sina" not in url:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _extract_cookies(page: CdpSession) -> Dict[str, str]:
+    cookies: Dict[str, str] = {}
+    try:
+        result = page.call("Network.getAllCookies")
+        for c in result.get("cookies", []):
+            if c.get("name"):
+                cookies[c["name"]] = c.get("value", "")
+    except Exception:
+        # 兜底：从当前页面 document.cookie 取
+        try:
+            for item in (page.eval("document.cookie || ''") or "").split(";"):
+                if "=" in item:
+                    k, _, v = item.strip().partition("=")
+                    cookies[k.strip()] = v.strip()
+        except Exception:
+            pass
+    cookies.setdefault("MLOGIN", "1")
+    cookies.setdefault("XSRF-TOKEN", "")
+    if not cookies:
+        raise QrLoginError("浏览器内未读取到有效 Cookie，请重试扫码")
+    return cookies
+
+
+# ---------------------------------------------------------------------------
+# 会话管理
+# ---------------------------------------------------------------------------
+class QrLoginManager:
+    def __init__(self, ttl: int = TTL):
         self._sessions: Dict[str, dict] = {}
-        self._ttl = 180  # 秒
+        self._ttl = ttl
 
     def _cleanup(self) -> None:
         now = time.time()
-        self._sessions = {
-            k: v for k, v in self._sessions.items() if now - v["created"] < self._ttl
+        expired = [k for k, v in self._sessions.items() if now - v["created"] >= self._ttl]
+        for sid in expired:
+            self.drop(sid)
+
+    def drop(self, sid: str) -> None:
+        sess = self._sessions.pop(sid, None)
+        if not sess or sess.get("page") is None:
+            return
+        page = sess["page"]
+        try:
+            page.close()
+        except Exception:
+            pass
+        proc = getattr(page, "_launcher_proc", None)
+        if proc is not None:
+            _terminate_browser(proc)
+
+    # -- 内部阻塞实现（线程中执行） --------------------------------------
+    def _start_sync(self, sid: str, qr_png: Path) -> dict:
+        page, _proc, _port, _profile = _start_browser()
+        try:
+            _navigate(page, LOGIN_URL)
+        except Exception as e:
+            self.drop(sid)
+            raise QrLoginError(f"打开登录页失败：{e}")
+        qr_url = _capture_qr(page, qr_png)
+        self._sessions[sid] = {
+            "sid": sid, "page": page, "qr_url": qr_url,
+            "qr_in_browser": qr_url is None, "state": "wait", "created": time.time(),
+        }
+        return {
+            "sid": sid,
+            "qr_in_browser": qr_url is None,
+            "qr_url": qr_url or "",
+            "expires_in": self._ttl,
+            "msg": (
+                "已打开浏览器登录窗口；若前端未显示二维码，请直接在浏览器窗口中完成扫码。"
+                if qr_url is None
+                else "请用手机微博 App 扫码并确认，然后回到应用内等待登录完成。"
+            ),
         }
 
-    def get(self, sid: str) -> Optional[dict]:
-        return self._sessions.get(sid)
+    def _status_sync(self, sess: dict) -> dict:
+        page = sess.get("page")
+        if page is None:
+            return {"state": "expired", "msg": "浏览器已关闭，请重新发起扫码"}
+        if _browser_logged_in(page):
+            sess["state"] = "confirmed"
+            return {"state": "confirmed", "msg": "已登录，正在获取 Cookie…"}
+        return {"state": "wait", "msg": "等待扫码并确认…"}
 
+    def _confirm_sync(self, sess: dict) -> dict:
+        page = sess.get("page")
+        if page is None:
+            raise QrLoginError("浏览器已关闭，请重新发起扫码")
+        cookies = _extract_cookies(page)
+        return {"ok": True, "cookies": cookies}
+
+    # -- 对外 async 接口 ------------------------------------------------
     async def start(self) -> dict:
         self._cleanup()
-        async with httpx.AsyncClient(headers=_HEADERS, timeout=_TIMEOUT,
-                                     follow_redirects=True) as client:
-            r = await client.get(f"{PASSPORT}/qrcode/show",
-                                 params={"st": str(int(time.time()))})
-            if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
-                final = str(r.url)
-                raise QrLoginError(
-                    f"扫码接口不可用 (status={r.status_code}, 最终地址={final})。"
-                    "新浪已收紧匿名 SSO 接口，纯 HTTP 扫码可能被拦截。"
-                )
-            try:
-                payload = r.json()
-            except Exception:
-                raise QrLoginError(f"扫码接口返回非 JSON: {r.text[:200]}")
-            data = payload.get("data", {}) or {}
-            qrid = data.get("qrid") or payload.get("qrid")
-            qr_img = data.get("qrcode_image")
-            if isinstance(qr_img, dict):
-                qr_img = qr_img.get("location") or ""
-            if not qrid or not qr_img:
-                raise QrLoginError(f"二维码接口字段异常: {payload}")
-            sid = uuid.uuid4().hex[:16]
-            self._sessions[sid] = {
-                "sid": sid,
-                "qrid": qrid,
-                "qr_url": qr_img if qr_img.startswith("http") else f"https:{qr_img}",
-                "status": "wait",
-                "alt": None,
-                "uid": None,
-                "created": time.time(),
-            }
-            return {
-                "sid": sid,
-                "qrid": qrid,
-                "qr_url": self._sessions[sid]["qr_url"],
-                "expires_in": self._ttl,
-            }
+        sid = uuid.uuid4().hex[:16]
+        qr_png = QR_CACHE_DIR / f"{sid}.png"
+        res = await asyncio.to_thread(self._start_sync, sid, qr_png)
+        res["sid"] = sid
+        return res
 
     async def status(self, sid: str) -> dict:
         sess = self._sessions.get(sid)
         if sess is None:
-            return {"state": "expired", "msg": "会话已失效，请重新获取二维码"}
-        async with httpx.AsyncClient(headers=_HEADERS, timeout=_TIMEOUT,
-                                     follow_redirects=True) as client:
-            r = await client.get(f"{PASSPORT}/qrcode/scan",
-                                 params={"qrid": sess["qrid"], "st": str(int(time.time()))})
-            payload = r.json()
-            code = str(payload.get("code", ""))
-            data = payload.get("data", {}) or {}
-            if code == "20000":
-                sess["alt"] = data.get("alt")
-                sess["uid"] = data.get("uid")
-                sess["status"] = "confirmed"
-                return {"state": "confirmed", "msg": "已确认，正在换取 Cookie…"}
-            if code == "50113":
-                return {"state": "scan", "msg": "已扫码，请在手机上确认"}
-            return {"state": "wait", "msg": "等待扫码…"}
+            return {"state": "expired", "msg": "会话已失效，请重新发起扫码"}
+        return await asyncio.to_thread(self._status_sync, sess)
 
     async def confirm(self, sid: str) -> dict:
         sess = self._sessions.get(sid)
         if sess is None:
-            raise QrLoginError("会话不存在或已过期")
-        alt = sess.get("alt")
-        if not alt:
-            raise QrLoginError("尚未完成扫码确认")
-        async with httpx.AsyncClient(headers=_HEADERS, timeout=_TIMEOUT,
-                                     follow_redirects=True) as client:
-            r = await client.get(f"{PASSPORT}/login",
-                                 params={"entry": "mweibo", "alt": alt,
-                                         "st": str(int(time.time()))})
-            r.raise_for_status()
-            cookies = dict(r.cookies)
-            if not cookies:
-                logger.error("登录响应无 Cookie: %s", r.text[:300])
-                raise QrLoginError("登录响应未包含有效 Cookie，请重试")
-            # Cookie 通常需带上 MLOGIN 标记与 XSRF 占位
-            cookies.setdefault("MLOGIN", "1")
-            cookies.setdefault("XSRF-TOKEN", "")
-            return {
-                "ok": True,
-                "cookies": cookies,
-                "uid": sess.get("uid"),
-            }
+            raise QrLoginError("会话不存在或已过期，请重新发起扫码")
+        res = await asyncio.to_thread(self._confirm_sync, sess)
+        self.drop(sid)
+        return res
 
-    def drop(self, sid: str) -> None:
-        self._sessions.pop(sid, None)
+    def drop_session(self, sid: str) -> None:
+        self.drop(sid)
 
 
 qr_login = QrLoginManager()
+
+
+# 兼容：模块级开关，供测试设置 headless
+def _enable_headless() -> None:
+    _set_headless(True)

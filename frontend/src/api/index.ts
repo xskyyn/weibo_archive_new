@@ -4,14 +4,47 @@ import http from './http'
 export function getCookieStatus() {
   return http.get('/auth/status').then((r) => r.data)
 }
-export function importCookie(cookie: Record<string, string>) {
-  return http.post('/auth/cookie', { cookie }).then((r) => r.data)
+export function importCookie(cookie: Record<string, string>, name?: string, uid?: number) {
+  return http.post('/auth/cookie', { cookie, name, uid }).then((r) => r.data)
 }
 export function validateCookie() {
   return http.post('/auth/validate').then((r) => r.data)
 }
 export function getAppConfig() {
   return http.get('/auth/config').then((r) => r.data)
+}
+export function logoutAccount() {
+  return http.post('/auth/logout').then((r) => r.data)
+}
+
+// 多账号管理
+export function getAccounts() {
+  return http.get('/auth/accounts').then((r) => r.data)
+}
+export function switchAccount(id: string) {
+  return http.post('/auth/accounts/switch', { id }).then((r) => r.data)
+}
+export function deleteAccount(id: string) {
+  return http.delete(`/auth/accounts/${id}`).then((r) => r.data)
+}
+
+// 扫码登录（DrissionPage）
+export function qrStart() {
+  return http.post('/auth/qr/start').then((r) => r.data)
+}
+export function qrStatus(sid: string) {
+  return http.get(`/auth/qr/${sid}/status`).then((r) => r.data)
+}
+export function qrConfirm(sid: string) {
+  return http.post(`/auth/qr/${sid}/confirm`).then((r) => r.data)
+}
+export function qrCancel(sid: string) {
+  return http.get(`/auth/qr/${sid}/cancel`).then((r) => r.data)
+}
+
+// 目标用户切换（浏览/归档其他用户）
+export function setTarget(uid: number) {
+  return http.post('/auth/target', { uid }).then((r) => r.data)
 }
 
 // 任务

@@ -123,7 +123,7 @@ async def logout():
 
 
 # ---------------------------------------------------------------------------
-# 扫码登录（纯 httpx passport.weibo.cn）
+# 扫码登录（DrissionPage 真实浏览器）
 # ---------------------------------------------------------------------------
 @router.post("/qr/start")
 async def qr_start():
@@ -141,21 +141,51 @@ async def qr_status(sid: str):
         return {"ok": False, "msg": str(e)}
 
 
+@router.get("/qr/{sid}/cancel")
+async def qr_cancel(sid: str):
+    qr_login.drop_session(sid)
+    return {"ok": True, "msg": "扫码会话已取消"}
+
+
+async def _save_and_switch(cookies: dict) -> dict:
+    """用 Cookie 解析本人 uid/昵称，保存账号并切换到对应工作区。"""
+    import json
+    import time
+    from pathlib import Path
+
+    from backend.config import QR_CACHE_DIR
+    from backend.scraper.client import resolve_self_profile, resolve_container_id
+
+    # 写入临时 Cookie 文件，构造客户端解析本人身份
+    tmp_path = QR_CACHE_DIR / f"resolve_{time.time()}.json"
+    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path.write_text(json.dumps(cookies), encoding="utf-8")
+    try:
+        client = WeiboClient(tmp_path)
+        try:
+            uid, name = await resolve_self_profile(client)
+        except Exception:
+            uid, name = (await resolve_container_id(client))[0], ""
+        cookies = dict(client._cookies)
+        await client.close()
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    auth_manager.save_account(name or "扫码账号", uid, cookies)
+    if uid:
+        await set_db_target(uid)
+    return {"ok": True, "msg": "登录成功", "uid": uid, "name": name}
+
+
 @router.post("/qr/{sid}/confirm")
 async def qr_confirm(sid: str):
     try:
         result = await qr_login.confirm(sid)
-        cookies = result["cookies"]
-        uid = result.get("uid")
-        auth_manager.save_account("扫码账号", uid, cookies)
-        if uid:
-            await set_db_target(uid)
-        qr_login.drop(sid)
-        return {"ok": True, "msg": "登录成功", "uid": uid}
+        return await _save_and_switch(result["cookies"])
     except QrLoginError as e:
         return {"ok": False, "msg": str(e)}
     except Exception as e:
-        qr_login.drop(sid)
+        qr_login.drop_session(sid)
         return {"ok": False, "msg": mask_cookie(str(e))}
 
 

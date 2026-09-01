@@ -66,7 +66,8 @@ const statusMap: Record<string, string> = {
 
 async function onStart() {
   try {
-    await task.doStart()
+    const target = auth.targetUid && auth.targetUid !== auth.uid ? auth.targetUid : undefined
+    await task.doStart(target)
     ElMessage.success('归档任务已启动')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '启动失败，请先导入 Cookie')
