@@ -2,6 +2,15 @@
 
 本文件遵循 [语义化版本 2.0.0](https://semver.org/lang/zh-CN/)（`主.次.修订`），并遵循 `VERSIONING.md` 的提交/发版/打 Tag 规范。新版本区块一律从顶部追加，不在历史版本上编辑。
 
+## [1.1.6] - 2026-09-01
+
+### 🐛 修复
+
+- **扫码弹出的浏览器顶部出现"不受支持的命令行标志:--no-sandbox"警告条**：
+  - 根因：启动浏览器固定带 `--no-sandbox`，在普通用户桌面运行时触发 Chrome/Edge 的安全警告条
+  - 修复：新增 `_is_root()`，仅当以 root（POSIX `os.geteuid()==0`）运行时才追加 `--no-sandbox`，普通用户省略；同时增加 `--disable-infobars` 抑制信息条
+  - Windows 恒为 False（`geteuid` 不可用），故 Windows EXE 不再传 `--no-sandbox`，无警告
+
 ## [1.1.5] - 2026-09-01
 
 ### 🎨 样式/UI

@@ -223,6 +223,14 @@ def _find_browser() -> str:
     return ""
 
 
+def _is_root() -> bool:
+    """判断是否以 root 身份运行（POSIX）。Windows 恒为 False。"""
+    try:
+        return os.geteuid() == 0
+    except Exception:
+        return False
+
+
 def _terminate_browser(proc) -> None:
     import signal
 
@@ -254,8 +262,9 @@ def _start_browser() -> tuple:
         f"--remote-debugging-port={port}",
         f"--user-data-dir={profile}",
         "--disable-gpu",
-        "--no-sandbox",
         "--disable-dev-shm-usage",
+        # 抑制 “不受支持的命令行标志” 等信息条
+        "--disable-infobars",
         # 用全新 profile 启动时抑制 Edge/Chrome 自带的首启·附加条款·欢迎页，
         # 避免弹出 "This space intentionally blank" 占位框与登录页并存
         "--no-first-run",
@@ -264,6 +273,10 @@ def _start_browser() -> tuple:
         "--disable-sync",
         "--disable-features=msEdgeFirstRunExperience,msEdgeFirstRunExperienceOptIn",
     ]
+    # 仅在以 root 运行时需要 --no-sandbox；普通用户桌面相加会触发
+    # “不受支持的命令行标志:--no-sandbox” 警告条，故只在 root 下追加
+    if _is_root():
+        cmd.append("--no-sandbox")
     if _HEADLESS:
         cmd.append("--headless=new")
     cmd.append("about:blank")
