@@ -19,7 +19,7 @@ _HOOK_PKGS = [
     "sqlalchemy", "aiosqlite",
     "httpx", "httpcore", "h11", "anyio", "sniffio",
     "tenacity", "jinja2", "websockets", "multipart",
-    "click", "typer", "certifi", "webview",
+    "click", "certifi", "webview",
 ]
 
 datas, binaries, hiddenimports = [], [], []

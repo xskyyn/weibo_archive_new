@@ -7,6 +7,7 @@ jieba>=0.42
 httpx>=0.27
 tenacity>=8.3
 websockets>=12.0
+sniffio>=1.3
 python-multipart>=0.0.9
 jinja2>=3.1
 # Windows 桌面壳（内嵌窗口），打包版必需；纯服务端(Linux headless)可不装
