@@ -9,5 +9,7 @@ tenacity>=8.3
 websockets>=12.0
 python-multipart>=0.0.9
 jinja2>=3.1
+# Windows 桌面壳（内嵌窗口），打包版必需；纯服务端(Linux headless)可不装
+pywebview>=5.0
 # 可选：浏览器自动化降级兜底 (DrissionPage)，Phase 4 实现，按需安装
 # drissionpage>=4.1

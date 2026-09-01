@@ -1,5 +1,6 @@
 # Python
 .venv/
+.venv-win/
 __pycache__/
 *.pyc
 
@@ -11,6 +12,10 @@ cookie.json
 frontend/node_modules/
 frontend/dist/
 frontend/*.tsbuildinfo
+
+# PyInstaller 构建产物
+build/
+*.spec.bak
 
 # 导出产物
 *.zip

@@ -1,6 +1,7 @@
 """WeiboArchive FastAPI 启动入口与生命周期管理。"""
 from __future__ import annotations
 
+import sys
 import uvicorn
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.config import APP_TITLE, HOST, PORT, VERSION, WORKSPACE_DIR
+from backend.config import APP_TITLE, HOST, PORT, VERSION, WORKSPACE_DIR, resolve_port
 from backend.database import init_db
 from backend.routers import auth, export, posts, task
 from backend.utils.logger import get_logger, setup_logging
@@ -44,7 +45,32 @@ app.include_router(export.router)
 # 静态资源服务（前端构建产物 + 下载的媒体）
 app.mount("/media", StaticFiles(directory=str(WORKSPACE_DIR)), name="media")
 
-FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+def _frontend_dist() -> Path:
+    """定位前端构建产物目录。
+
+    - 源码运行：frontend/dist
+    - PyInstaller onefile：解压目录 sys._MEIPASS/frontend/dist
+    - PyInstaller onedir：可执行文件同目录 frontend/dist
+    """
+    if getattr(sys, "frozen", False):
+        candidates = []
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "frontend" / "dist")
+        candidates.append(Path(sys.executable).resolve().parent / "frontend" / "dist")
+        for c in candidates:
+            if (c / "index.html").exists():
+                return c
+    return Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+
+FRONTEND_DIST = _frontend_dist()
+
+
+@app.get("/api/version")
+async def api_version():
+    return {"name": APP_TITLE, "version": VERSION}
 
 
 @app.get("/")
@@ -64,7 +90,20 @@ if FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
 
 
+def run_server(host: str = HOST, port: int = 0, block: bool = True):
+    """启动 FastAPI 服务。port=0 表示自动探测可用端口。
+
+    在独立线程中运行时，请手动指定一个已解析端口。
+    """
+    if not port:
+        port = resolve_port()
+    logger.info("服务已启动 http://%s:%s (前端: %s)", host, port, FRONTEND_DIST)
+    uvicorn.run(app, host=host, port=port, reload=False)
+
+
 if __name__ == "__main__":
     import webbrowser
-    webbrowser.open(f"http://{HOST}:{PORT}")
-    uvicorn.run("backend.main:app", host=HOST, port=PORT, reload=False)
+
+    port = resolve_port()
+    webbrowser.open(f"http://{HOST}:{port}")
+    run_server(host=HOST, port=port)
