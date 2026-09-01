@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from backend.config import CONCURRENCY, MAX_PAGES
 from backend.database import (
-    AsyncSessionLocal, Comment, Post, User, func, select,
+    AsyncSessionLocal, Comment, Post, User, func, select, set_db_target,
 )
 from backend.scraper.client import (
     WeiboCaptchaError,
@@ -220,6 +220,8 @@ class ArchiveTaskManager:
                 raise RuntimeError("无法解析登录 UID，请在启动接口传入 uid")
             self.current_uid = uid
             self._save_state()
+            # 切换目标用户的工作区(独立 DB + 媒体目录)
+            await set_db_target(uid)
 
             # 记录用户信息
             async with AsyncSessionLocal() as db:

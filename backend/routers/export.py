@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.config import EXPORT_DIR, PIC_DIR, RESOURCE_DIR, VIDEO_DIR
+from backend import workspace
 from backend.database import Comment, Media, Post, User, get_db
 
 router = APIRouter(prefix="/api/export", tags=["Export"])
@@ -142,8 +142,9 @@ async def export_html(db: AsyncSession = Depends(get_db)):
             if p.exists():
                 zf.write(p, f"media/{p.name}")
 
-    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    out = EXPORT_DIR / f"weibo_archive_{datetime.now():%Y%m%d_%H%M%S}.zip"
+    export_dir = workspace.export_dir()
+    export_dir.mkdir(parents=True, exist_ok=True)
+    out = export_dir / f"weibo_archive_{datetime.now():%Y%m%d_%H%M%S}.zip"
     out.write_bytes(buf.getvalue())
 
     return {"ok": True, "path": str(out), "posts": len(records), "media": len(media_map)}

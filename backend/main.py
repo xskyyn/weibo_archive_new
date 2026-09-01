@@ -11,8 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend import auth_manager, workspace
 from backend.config import APP_TITLE, HOST, LOGS_DIR, PORT, VERSION, WORKSPACE_DIR, resolve_port
-from backend.database import init_db
+from backend.database import set_db_target
 from backend.routers import auth, export, posts, task
 from backend.utils.logger import get_logger, setup_logging
 
@@ -22,8 +23,10 @@ setup_logging(log_dir=LOGS_DIR)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
-    logger.info("数据库与 FTS5 全文搜索引擎初始化完成。")
+    # 启动时切换到当前账号对应的自有工作区
+    uid = auth_manager.active_uid()
+    await set_db_target(uid)
+    logger.info("数据库与 FTS5 全文搜索引擎初始化完成 (目标 uid=%s, 工作区=%s)", uid, workspace.user_dir())
     yield
 
 

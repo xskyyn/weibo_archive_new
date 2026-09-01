@@ -13,22 +13,33 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from backend.config import DATABASE_URL
+from backend import workspace
 
 # ---------------------------------------------------------------------------
-# 引擎与 Session
+# 引擎与 Session（动态按当前工作区重建）
 # ---------------------------------------------------------------------------
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args={"check_same_thread": False},
-)
+_engine = None
 
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+
+def _make_engine(url: str):
+    return create_async_engine(url, echo=False, connect_args={"check_same_thread": False})
+
+
+def init_engine() -> None:
+    """按当前工作区的目标 UID 创建数据库引擎。"""
+    global _engine
+    _engine = _make_engine(workspace.db_url())
+
+
+def AsyncSessionLocal():
+    """当前工作区对应的异步会话工厂（每次返回新 Session，绑定当前引擎）。
+
+    用法与 async_sessionmaker 一致：`async with AsyncSessionLocal() as db:`。
+    """
+    if _engine is None:
+        raise RuntimeError("数据库引擎未初始化，请先调用 set_db_target/init_engine")
+    maker = async_sessionmaker(bind=_engine, class_=AsyncSession, expire_on_commit=False)
+    return maker()
 
 
 class Base(DeclarativeBase):
@@ -193,11 +204,24 @@ def clean_and_tokenize(html_text: str) -> str:
 # ---------------------------------------------------------------------------
 async def init_db() -> None:
     """创建所有表并配置 FTS5 全文索引与同步触发器。"""
-    async with engine.begin() as conn:
+    if _engine is None:
+        init_engine()
+    async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # 显式执行 FTS5 虚拟表与触发器（保证在已存在的库上也能生效）
         for stmt in _split_statements(FTS5_SETUP_SQL):
             await conn.execute(text(stmt))
+
+
+async def set_db_target(uid: int | None) -> None:
+    """切换到目标用户的工作区（对应独立 DB 与媒体目录），并完成建表。"""
+    global _engine
+    if _engine is not None:
+        await _engine.dispose()
+    workspace.set_current_uid(uid)
+    workspace.ensure_dirs()
+    init_engine()
+    await init_db()
 
 
 async def get_db():

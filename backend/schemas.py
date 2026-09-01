@@ -11,6 +11,8 @@ class CookieImport(BaseModel):
     """兼容两种：直接传 cookie 字典，或含 weibo.cn 键的结构。"""
     cookie: Optional[Dict[str, str]] = None
     weibo_cn: Optional[Dict[str, str]] = None
+    name: Optional[str] = ""
+    uid: Optional[int] = None
 
     def merged(self) -> Dict[str, str]:
         if self.weibo_cn is not None:
@@ -18,6 +20,14 @@ class CookieImport(BaseModel):
         if self.cookie is not None:
             return dict(self.cookie)
         return {}
+
+
+class SwitchAccountReq(BaseModel):
+    id: str
+
+
+class SetTargetReq(BaseModel):
+    uid: int
 
 
 # -- 任务控制 -----------------------------------------------------------

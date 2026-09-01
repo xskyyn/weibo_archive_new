@@ -18,8 +18,9 @@ from tenacity import (
     wait_exponential,
 )
 
+from backend.auth_manager import active_cookie_path
 from backend.config import (
-    COOKIE_FILE, DELAY_MAX, DELAY_MIN,
+    DELAY_MAX, DELAY_MIN,
 )
 from backend.utils.logger import get_logger
 
@@ -54,7 +55,9 @@ class WeiboInvalidCookieError(Exception):
 # 请求客户端
 # ---------------------------------------------------------------------------
 class WeiboClient:
-    def __init__(self, cookie_path: Path = COOKIE_FILE):
+    def __init__(self, cookie_path: Path | None = None):
+        if cookie_path is None:
+            cookie_path = active_cookie_path()
         self.cookie_path = Path(cookie_path)
         self._cookies: Dict[str, Any] = self._load_cookies()
         self._client: Optional[httpx.AsyncClient] = None
@@ -281,3 +284,23 @@ async def resolve_container_id(client: WeiboClient) -> tuple[int, str]:
         current_cid = more_url.rstrip("/").split("/")[-1].split("?")[0]
     cid = str(current_cid).split("?")[0]
     return uid, cid
+
+
+async def resolve_self_profile(client: WeiboClient) -> tuple[int, str]:
+    """通过 /api/config 获取登录账号的 uid 与昵称。"""
+    data = await client.get_json(
+        "https://m.weibo.cn/api/config", referer="https://m.weibo.cn/"
+    )
+    uid = int(data.get("uid"))
+    name = data.get("userinfo", {}).get("screen_name", "") or ""
+    if not name:
+        try:
+            profile = await client.get_json(
+                f"https://m.weibo.cn/profile/info?uid={uid}",
+                referer=f"https://m.weibo.cn/profile/{uid}",
+            )
+            profile = profile.get("user", profile) if "user" in profile else profile
+            name = profile.get("screen_name", "") or ""
+        except Exception:
+            pass
+    return uid, name

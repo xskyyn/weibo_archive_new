@@ -11,7 +11,7 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.config import PIC_DIR, VIDEO_DIR, AVATAR_DIR
+from backend import workspace
 from backend.database import Media, User
 from backend.scraper.client import WeiboClient
 from backend.utils.logger import get_logger
@@ -39,7 +39,7 @@ class MediaDownloader:
             if media.local_path and Path(media.local_path).exists():
                 return
             try:
-                target_dir = VIDEO_DIR if media.type in ("video", "livephoto") else PIC_DIR
+                target_dir = workspace.video_dir() if media.type in ("video", "livephoto") else workspace.pic_dir()
                 target_dir.mkdir(parents=True, exist_ok=True)
 
                 filename = f"{media.post_id}_{media.id}.{media.ext or 'jpg'}"
@@ -128,14 +128,15 @@ class MediaDownloader:
             )
             users = list(result.scalars().all())
 
-        AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+        avatar_dir = workspace.avatar_dir()
+        avatar_dir.mkdir(parents=True, exist_ok=True)
         got = 0
 
         async def _one(user: User):
             nonlocal got
             if self._stopped:
                 return
-            target = AVATAR_DIR / f"{user.id}.jpg"
+            target = avatar_dir / f"{user.id}.jpg"
             if user.avatar_local and Path(user.avatar_local).exists():
                 return
             try:
