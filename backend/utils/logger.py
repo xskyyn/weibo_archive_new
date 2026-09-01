@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 import re
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 _FORMAT = "[%(asctime)s] %(levelname)s [%(name)s] %(message)s"
 _DATE_FMT = "%H:%M:%S"
@@ -12,12 +14,33 @@ def get_logger(name: str = "weibo") -> logging.Logger:
     return logging.getLogger(name)
 
 
-def setup_logging(level: int = logging.INFO) -> None:
-    logging.basicConfig(
-        level=level,
-        format=_FORMAT,
-        datefmt=_DATE_FMT,
-    )
+class MaskFormatter(logging.Formatter):
+    """在输出前对日志行做 Cookie 脱敏的 Formatter。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return mask_cookie(super().format(record))
+
+
+def setup_logging(level: int = logging.INFO, log_dir: str | Path | None = None) -> None:
+    """配置根日志：控制台 + 落地文件（均带 Cookie 脱敏）。
+
+    :param log_dir: 日志目录。传 None 则仅控制台；GUI 版(console=False)必须传目录。
+    """
+    handlers: list[logging.Handler] = []
+    console = logging.StreamHandler()
+    console.setFormatter(MaskFormatter(_FORMAT, _DATE_FMT))
+    handlers.append(console)
+
+    if log_dir is not None:
+        log_path = Path(log_dir) / "weibo_archive.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = RotatingFileHandler(
+            log_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        fh.setFormatter(MaskFormatter(_FORMAT, _DATE_FMT))
+        handlers.append(fh)
+
+    logging.basicConfig(level=level, handlers=handlers)
 
 
 # ---------------------------------------------------------------------------

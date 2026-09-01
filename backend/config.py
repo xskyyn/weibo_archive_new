@@ -44,9 +44,11 @@ PIC_DIR = RESOURCE_DIR / "pic"
 VIDEO_DIR = RESOURCE_DIR / "video"
 AVATAR_DIR = RESOURCE_DIR / "avatar"
 EXPORT_DIR = WORKSPACE_DIR / "exports"
+# 运行日志目录（GUI 版 console=False，必须落盘，否则日志丢失）
+LOGS_DIR = WORKSPACE_DIR / "logs"
 
 for _dir in (WORKSPACE_DIR, DEFAULT_USER_DIR, RESOURCE_DIR, PIC_DIR,
-             VIDEO_DIR, AVATAR_DIR, EXPORT_DIR):
+             VIDEO_DIR, AVATAR_DIR, EXPORT_DIR, LOGS_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
 
 # 数据库文件 (运行时根据登录 UID 动态选择)

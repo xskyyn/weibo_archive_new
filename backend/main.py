@@ -11,13 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.config import APP_TITLE, HOST, PORT, VERSION, WORKSPACE_DIR, resolve_port
+from backend.config import APP_TITLE, HOST, LOGS_DIR, PORT, VERSION, WORKSPACE_DIR, resolve_port
 from backend.database import init_db
 from backend.routers import auth, export, posts, task
 from backend.utils.logger import get_logger, setup_logging
 
 logger = get_logger("weibo.main")
-setup_logging()
+setup_logging(log_dir=LOGS_DIR)
 
 
 @asynccontextmanager
