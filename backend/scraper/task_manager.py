@@ -229,7 +229,13 @@ class ArchiveTaskManager:
                 await parser.fetch_and_save_profile(db, self.current_uid)
 
             new_post_ids: list = []
-            seen_ids: Set[str] = set()
+            # 断点续抓：把已归档的本人微博 mid 载入 seen_ids，
+            # 重跑时跳过已抓内容，继续向后翻页补抓缺失微博
+            async with AsyncSessionLocal() as db:
+                rows = await db.execute(select(Post.mid).where(Post.is_own.is_(True)))
+                seen_ids = {str(mid) for mid in rows.scalars().all()}
+            if seen_ids:
+                await self.log(f"↩️ 检测到已有 {len(seen_ids)} 条归档，继续向后翻页补抓…")
             page = 0
 
             while not self._stop_event.is_set():
@@ -280,9 +286,10 @@ class ArchiveTaskManager:
 
                 if MAX_PAGES and page >= MAX_PAGES:
                     break
-                # 本页无新增则说明已到底
-                if page_new == 0:
-                    break
+                # 注意：不能以"本页无新增"作为终止条件。
+                # 断点续抓时前几页都是已归档内容（新增 0 条），
+                # 若在此 break 将永远到不了缺失的旧微博页。
+                # 终止只依赖接口返回空列表（已抓取全部内容）。
 
             # 评论补齐阶段：为所有评论未抓全的微博抓取一二级评论
             if not self._stop_event.is_set():
