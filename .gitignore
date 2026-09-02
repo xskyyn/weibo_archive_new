@@ -18,7 +18,11 @@ frontend/*.tsbuildinfo
 
 # PyInstaller 构建产物
 build/
+dist/
 *.spec.bak
+
+# 打包工具（Inno Setup 便携版等）
+tools/
 
 # 导出产物
 *.zip
