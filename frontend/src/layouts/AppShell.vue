@@ -7,6 +7,7 @@
         <el-menu-item index="/archives">归档浏览</el-menu-item>
         <el-menu-item index="/media">媒体时光轴</el-menu-item>
         <el-menu-item index="/tasks">任务中心</el-menu-item>
+        <el-menu-item index="/settings">设置</el-menu-item>
       </el-menu>
       <div class="aside-foot">
         <el-tag v-if="auth.activeAccount" type="success" size="small">当前：{{ auth.activeAccount.name || '未命名' }}</el-tag>

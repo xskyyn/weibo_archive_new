@@ -10,6 +10,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'archives', name: 'archives', component: () => import('@/views/ArchivesView.vue') },
       { path: 'media', name: 'media', component: () => import('@/views/MediaView.vue') },
       { path: 'tasks', name: 'tasks', component: () => import('@/views/TasksView.vue') },
+      { path: 'settings', name: 'settings', component: () => import('@/views/SettingsView.vue') },
     ],
   },
 ]

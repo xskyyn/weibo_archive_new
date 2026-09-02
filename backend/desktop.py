@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import os
 import socket
 import sys
 import threading
@@ -15,7 +16,7 @@ import time
 
 import uvicorn
 
-from backend.config import APP_TITLE, HOST, resolve_port
+from backend.config import APP_TITLE, HOST, consume_restart_flag, resolve_port
 from backend.main import app, run_server
 from backend.utils.logger import get_logger
 
@@ -62,6 +63,14 @@ def main() -> int:
     # 给 uvicorn 一点时间退出
     thread.join(timeout=3)
     logger.info("后端服务已停止，进程退出。")
+
+    # 设置变更（如数据目录）后自动重启，使新配置生效
+    if consume_restart_flag():
+        logger.info("检测到重启请求，正在重启应用…")
+        try:
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+        except Exception as e:
+            logger.error("自动重启失败：%s，请手动重新打开应用", e)
     return 0
 
 

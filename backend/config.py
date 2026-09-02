@@ -1,6 +1,7 @@
 """全局配置管理。"""
 from __future__ import annotations
 
+import json
 import os
 import socket
 import sys
@@ -12,16 +13,50 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
+def _settings_file() -> Path:
+    """设置文件位置：独立于数据目录，避免切换数据目录后设置丢失。
+
+    - 打包 Windows 版：%APPDATA%/WeiboArchive/settings.json
+    - 源码运行：项目根下的 settings.json
+    """
+    if is_frozen() and sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA") or str(Path.home())
+        return Path(appdata) / "WeiboArchive" / "settings.json"
+    return Path(__file__).resolve().parent.parent / "settings.json"
+
+
+SETTINGS_FILE = _settings_file()
+
+
+def _load_settings() -> dict:
+    if not SETTINGS_FILE.exists():
+        return {}
+    try:
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _saved_workspace_dir() -> Path | None:
+    val = _load_settings().get("workspace_dir")
+    if not val:
+        return None
+    return Path(val).expanduser()
+
+
 def _data_root() -> Path:
-    """数据根目录。
+    """数据根目录（优先级：环境变量 > 设置文件 > 默认）。
 
     - 打包 Windows 版：默认 %USERPROFILE%/WeiboArchive/workspace
     - 源码运行：项目根下的 workspace/
-    可用环境变量 WEIBO_WORKSPACE 覆盖。
+    可在应用内"设置"页修改，保存后重启生效。
     """
     env = os.environ.get("WEIBO_WORKSPACE")
     if env:
         return Path(env)
+    saved = _saved_workspace_dir()
+    if saved:
+        return saved
     if is_frozen() and sys.platform.startswith("win"):
         userprofile = os.environ.get("USERPROFILE") or str(Path.home())
         return Path(userprofile) / "WeiboArchive" / "workspace"
@@ -88,7 +123,54 @@ SEARCH_PAGE_SIZE = 20
 # 其他
 # ---------------------------------------------------------------------------
 APP_TITLE = "WeiboArchive 微博归档工具"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
+
+
+# ---------------------------------------------------------------------------
+# 设置读写（数据目录等，持久化到 SETTINGS_FILE）
+# ---------------------------------------------------------------------------
+def get_settings() -> dict:
+    """返回当前生效的设置（含数据目录等）。"""
+    return {
+        "workspace_dir": str(WORKSPACE_DIR),
+        "settings_file": str(SETTINGS_FILE),
+        "version": VERSION,
+        "frozen": is_frozen(),
+    }
+
+
+def save_workspace_dir(path: str) -> Path:
+    """保存新的数据目录并返回新路径（当前进程需重启后生效）。"""
+    new_dir = Path(path).expanduser()
+    if not new_dir.is_absolute():
+        new_dir = Path.cwd() / new_dir
+    new_dir.mkdir(parents=True, exist_ok=True)
+    data = _load_settings()
+    data["workspace_dir"] = str(new_dir)
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SETTINGS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(SETTINGS_FILE)
+    return new_dir
+
+
+# 重启标志：数据目录等设置变更后由桌面壳检测并自动重启
+RESTART_FLAG_FILE = SETTINGS_FILE.with_name("restart.flag")
+
+
+def request_restart() -> None:
+    RESTART_FLAG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    RESTART_FLAG_FILE.write_text("1", encoding="utf-8")
+
+
+def consume_restart_flag() -> bool:
+    if RESTART_FLAG_FILE.exists():
+        try:
+            RESTART_FLAG_FILE.unlink()
+        except OSError:
+            pass
+        return True
+    return False
 
 
 def resolve_port(start: int = PORT, try_n: int = 20) -> int:

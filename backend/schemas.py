@@ -30,6 +30,11 @@ class SetTargetReq(BaseModel):
     uid: int
 
 
+# -- 设置 -----------------------------------------------------------
+class WorkspaceDirReq(BaseModel):
+    workspace_dir: str
+
+
 # -- 任务控制 -----------------------------------------------------------
 class StartTaskReq(BaseModel):
     uid: Optional[int] = None

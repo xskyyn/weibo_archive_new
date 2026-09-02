@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import auth_manager, workspace
 from backend.config import APP_TITLE, HOST, LOGS_DIR, PORT, VERSION, WORKSPACE_DIR, resolve_port
 from backend.database import set_db_target
-from backend.routers import auth, export, posts, task
+from backend.routers import auth, export, posts, settings, task
 from backend.utils.logger import get_logger, setup_logging
 
 logger = get_logger("weibo.main")
@@ -44,6 +44,7 @@ app.include_router(auth.router)
 app.include_router(task.router)
 app.include_router(posts.router)
 app.include_router(export.router)
+app.include_router(settings.router)
 
 # 静态资源服务（前端构建产物 + 下载的媒体）
 app.mount("/media", StaticFiles(directory=str(WORKSPACE_DIR)), name="media")

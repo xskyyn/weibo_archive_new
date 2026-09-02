@@ -92,6 +92,20 @@ export function exportHtml() {
   return http.post('/export/html').then((r) => r.data)
 }
 
+// 设置
+export function getSettings() {
+  return http.get('/settings').then((r) => r.data)
+}
+export function setWorkspaceDir(path: string) {
+  return http.put('/settings/workspace', { workspace_dir: path }).then((r) => r.data)
+}
+export function pickWorkspaceDir() {
+  return http.post('/settings/pick-dir').then((r) => r.data)
+}
+export function restartApp() {
+  return http.post('/settings/restart').then((r) => r.data)
+}
+
 // WebSocket
 export function taskWebSocketUrl() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
