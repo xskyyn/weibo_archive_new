@@ -2,6 +2,31 @@
 
 本文件遵循 [语义化版本 2.0.0](https://semver.org/lang/zh-CN/)（`主.次.修订`），并遵循 `VERSIONING.md` 的提交/发版/打 Tag 规范。新版本区块一律从顶部追加，不在历史版本上编辑。
 
+## [1.2.0] - 2026-09-02
+
+### 🚀 新功能
+
+- **微博视频爬取**：支持新版混合媒体结构 `mix_media_info.items` 中的视频与 livephoto
+  - 视频：优先取 `media_info.playback_list` 最高清晰度 mp4（如 1080p），回退 `media_info` 各档地址（`mp4_720p_mp4` / `mp4_hd_url` / `stream_url` 等）
+  - livephoto：提取 `data.video` 的 `.mov` 源，经 ffmpeg 转封装为 mp4
+  - 兼容旧结构 `page_info.urls` 视频解析，按 URL 去重
+  - **媒体补齐**：归档任务新增 `backfill_missing_fields`，为已入库历史微博从 `raw_json` 补齐缺失媒体（旧版本未解析出的视频等）与发布位置，幂等执行
+  - **ffmpeg 转封装修复**：特殊封装先下载到本地临时文件再转封装，兼容 `--disable-network` 精简版 ffmpeg（此前直接传 URL 给 ffmpeg 会失败）
+
+- **发布位置抓取与展示**：新增 `Post.region_name` 字段（如"发布于 北京"）
+  - 解析新微博时抓取 `region_name`；`init_db` 增加轻量迁移，已存在的库自动 `ALTER TABLE` 补列
+  - API 返回 `region_name`，前端 `PostCard` 在发布时间旁展示位置
+  - 历史数据补齐：1467 条微博中 1409 条已回填位置
+
+### 🐛 修复
+
+- **视频未抓取**：此前解析器只处理 `pics`/`pic_ids`/`page_info`，新版接口的 `mix_media_info` 视频被漏掉；全库视频数为 0，现已补齐并下载
+
+### 📝 关键经验
+
+- 微博新版接口的媒体可能位于 `mix_media_info.items`（含 `type:"video"` 与 livephoto），解析需兼容多套结构
+- 精简版 ffmpeg（`--disable-network`）无法直接拉取 URL，转封装前必须先把源文件下载到本地
+
 ## [1.1.7] - 2026-09-02
 
 ### 🐛 修复
