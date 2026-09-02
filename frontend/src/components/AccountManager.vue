@@ -1,5 +1,13 @@
 <template>
-  <el-dialog v-model="visible" title="账号管理" width="680px" :close-on-click-modal="false">
+  <el-dialog
+    v-model="visible"
+    title="账号管理"
+    :width="isMobile ? '100%' : '680px'"
+    :fullscreen="isMobile"
+    :close-on-click-modal="false"
+    class="account-dialog"
+    modal-class="account-dialog-overlay"
+  >
     <el-alert
       type="info"
       :closable="false"
@@ -11,7 +19,7 @@
       <!-- 账号列表 -->
       <el-tab-pane label="已登录账号" name="list">
         <el-table :data="auth.accounts" size="small" empty-text="暂无账号，请先扫码登录或导入 Cookie">
-          <el-table-column label="账号" min-width="160">
+          <el-table-column label="账号" min-width="120">
             <template #default="{ row }">
               <div class="acc-name">
                 {{ row.name || '未命名' }}
@@ -20,13 +28,13 @@
               <div v-if="row.uid" class="acc-uid">UID: {{ row.uid }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="登录态" width="90">
+          <el-table-column label="登录态" width="70">
             <template #default="{ row }">
               <el-tag v-if="row.has_cookie" type="success" size="small">已登录</el-tag>
               <el-tag v-else type="info" size="small">未登录</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="230" align="right">
+          <el-table-column label="操作" width="180" align="right">
             <template #default="{ row }">
               <el-button
                 v-if="row.id !== auth.activeId"
@@ -67,16 +75,26 @@
       <el-tab-pane label="扫码登录" name="qr">
         <template v-if="!qr.sid">
           <el-alert type="warning" :closable="false" class="mb">
-            点击后将在本机弹出浏览器登录窗口（原生 CDP 驱动本机 Chrome/Edge）。
-            使用手机微博 App 扫码并确认即可完成登录。
+            <template v-if="isAndroid">
+              点击后将打开应用内登录页面，使用手机微博 App 扫码并确认，或直接在页面中完成账号密码登录。
+            </template>
+            <template v-else>
+              点击后将在本机弹出浏览器登录窗口（原生 CDP 驱动本机 Chrome/Edge）。
+              使用手机微博 App 扫码并确认即可完成登录。
+            </template>
           </el-alert>
           <el-button type="primary" :loading="qr.starting" @click="startQr">开始扫码登录</el-button>
         </template>
         <template v-else>
           <el-alert type="info" :closable="false" class="mb">
-            已在本机弹出浏览器登录窗口（passport.weibo.com）。
-            请<strong>在弹出的浏览器窗口中用手机微博 App 扫码并点「确认登录」</strong>，
-            登录成功后点击下方按钮完成 Cookie 抓取。
+            <template v-if="isAndroid">
+              请在<strong>应用内登录页面</strong>完成扫码或账号密码登录，登录成功后下方按钮会自动变为可用。
+            </template>
+            <template v-else>
+              已在本机弹出浏览器登录窗口（passport.weibo.com）。
+              请<strong>在弹出的浏览器窗口中用手机微博 App 扫码并点「确认登录」</strong>，
+              登录成功后点击下方按钮完成 Cookie 抓取。
+            </template>
           </el-alert>
           <div class="qr-status mt">
             <el-tag :type="qr.state === 'confirmed' ? 'success' : 'primary'">{{ qr.msg }}</el-tag>
@@ -129,6 +147,19 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>()
 
 const auth = useAuthStore()
 const tab = ref('list')
+const isAndroid = computed(() => !!(window as any).AndroidBridge)
+
+// 移动端检测：Android 环境或窄屏时使用全屏弹窗
+const isMobile = ref(
+  !!(window as any).AndroidBridge || window.innerWidth <= 768
+)
+function _onResize() {
+  isMobile.value = !!(window as any).AndroidBridge || window.innerWidth <= 768
+}
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', _onResize)
+})
+window.addEventListener('resize', _onResize)
 
 // 目标会话
 const targetInput = ref('')
@@ -165,6 +196,10 @@ async function startQr() {
     qr.img = res.qr_url || ''
     qr.state = 'wait'
     qr.msg = '等待扫码并确认…'
+    // Android：通过原生桥接打开 WebView 登录页
+    if (res.android_webview && (window as any).AndroidBridge) {
+      ;(window as any).AndroidBridge.startLogin(res.sid)
+    }
     pollQr()
   } finally {
     qr.starting = false
@@ -200,6 +235,7 @@ async function confirmQr() {
     if (res.ok) {
       ElMessage.success('登录成功')
       resetQr()
+      tab.value = 'list'
       await auth.refreshAll()
     } else {
       ElMessage.error(res.msg || '获取 Cookie 失败')
@@ -268,13 +304,118 @@ const visible = computed({
   get: () => props.modelValue,
   set: (v) => emit('update:modelValue', v),
 })
+
+// 强制移动端弹窗全屏（竖屏比例）
+// Element Plus Dialog 通过 teleport 渲染到 body，scoped 样式无法作用到根元素，
+// 因此用 MutationObserver 监听 DOM 变化，弹窗出现时立刻设置内联样式。
+let _fsObserver: MutationObserver | null = null
+let _fsTries = 0
+
+function applyFullscreenStyles() {
+  const dialog = document.querySelector('.account-dialog') as HTMLElement | null
+  const overlay = document.querySelector('.account-dialog-overlay') as HTMLElement | null
+  const overlayDialog = document.querySelector(
+    '.account-dialog-overlay .el-overlay-dialog'
+  ) as HTMLElement | null
+
+  if (!overlay && !overlayDialog && !dialog) {
+    return false // 元素还没出现
+  }
+
+  const w = window.innerWidth + 'px'
+  const h = window.innerHeight + 'px'
+
+  if (overlay) {
+    overlay.style.setProperty('padding', '0', 'important')
+    overlay.style.setProperty('position', 'fixed', 'important')
+    overlay.style.setProperty('top', '0', 'important')
+    overlay.style.setProperty('left', '0', 'important')
+    overlay.style.setProperty('width', w, 'important')
+    overlay.style.setProperty('height', h, 'important')
+    overlay.style.setProperty('z-index', '2000', 'important')
+  }
+  if (overlayDialog) {
+    overlayDialog.style.setProperty('position', 'absolute', 'important')
+    overlayDialog.style.setProperty('top', '0', 'important')
+    overlayDialog.style.setProperty('left', '0', 'important')
+    overlayDialog.style.setProperty('width', '100%', 'important')
+    overlayDialog.style.setProperty('height', '100%', 'important')
+    overlayDialog.style.setProperty('margin', '0', 'important')
+    overlayDialog.style.setProperty('padding', '0', 'important')
+    overlayDialog.style.setProperty('display', 'flex', 'important')
+    overlayDialog.style.setProperty('align-items', 'stretch', 'important')
+    overlayDialog.style.setProperty('justify-content', 'stretch', 'important')
+    overlayDialog.style.setProperty('animation', 'none', 'important')
+    overlayDialog.style.setProperty('transition', 'none', 'important')
+  }
+  if (dialog) {
+    dialog.style.setProperty('position', 'relative', 'important')
+    dialog.style.setProperty('top', '0', 'important')
+    dialog.style.setProperty('left', '0', 'important')
+    dialog.style.setProperty('width', '100%', 'important')
+    dialog.style.setProperty('max-width', '100%', 'important')
+    dialog.style.setProperty('height', '100%', 'important')
+    dialog.style.setProperty('max-height', '100%', 'important')
+    dialog.style.setProperty('margin', '0', 'important')
+    dialog.style.setProperty('border-radius', '0', 'important')
+    dialog.style.setProperty('display', 'flex', 'important')
+    dialog.style.setProperty('flex-direction', 'column', 'important')
+    dialog.style.setProperty('transform', 'none', 'important')
+    dialog.style.setProperty('animation', 'none', 'important')
+    dialog.style.setProperty('transition', 'none', 'important')
+  }
+  return !!(overlay && overlayDialog && dialog)
+}
+
+function startFullscreenObserver() {
+  stopFullscreenObserver()
+  _fsTries = 0
+
+  // 先立即尝试一次
+  if (applyFullscreenStyles()) return
+
+  // 用 MutationObserver 监听 body，弹窗出现后立刻应用样式
+  _fsObserver = new MutationObserver(() => {
+    const done = applyFullscreenStyles()
+    _fsTries++
+    // 应用成功后再观察一会儿，防止 Element Plus 动画覆盖样式
+    if (done && _fsTries > 10) {
+      stopFullscreenObserver()
+    }
+  })
+  _fsObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['style', 'class'],
+  })
+}
+
+function stopFullscreenObserver() {
+  if (_fsObserver) {
+    _fsObserver.disconnect()
+    _fsObserver = null
+  }
+}
+
 watch(
   () => props.modelValue,
   (v) => {
-    if (v) auth.fetchAccounts()
-  }
+    if (v) {
+      auth.fetchAccounts()
+      // 强制弹窗全屏（移动端竖屏比例）
+      // Element Plus Dialog 通过 teleport 渲染，用 MutationObserver 确保样式生效
+      startFullscreenObserver()
+    } else {
+      stopFullscreenObserver()
+    }
+  },
+  { immediate: true }
 )
-onBeforeUnmount(clearQrTimer)
+onBeforeUnmount(() => {
+  clearQrTimer()
+  stopFullscreenObserver()
+})
 </script>
 
 <style scoped>
@@ -319,4 +460,58 @@ onBeforeUnmount(clearQrTimer)
 }
 .target-row { display: flex; gap: 10px; }
 .target-info { color: #6b7280; }
+
+/* 桌面端：弹窗内容区最大高度，避免超高内容溢出 */
+.account-dialog :deep(.el-dialog__body) {
+  max-height: 72vh;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+/* 移动端：弹窗铺满整个屏幕（竖屏比例），内容区可滚动 */
+/* 注意：el-dialog 通过 teleport 渲染到 body，根元素样式需用 :global() */
+@media (max-width: 768px) {
+  :global(.account-dialog-overlay .el-overlay-dialog) {
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 0;
+  }
+  :global(.account-dialog) {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    display: flex;
+    flex-direction: column;
+  }
+  :global(.account-dialog) .el-dialog__header {
+    padding: 14px 16px 10px;
+    flex-shrink: 0;
+  }
+  :global(.account-dialog) .el-dialog__body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    max-height: none;
+  }
+  :global(.account-dialog) .el-dialog__footer {
+    padding: 10px 16px;
+    flex-shrink: 0;
+  }
+  :global(.account-dialog) .el-table {
+    font-size: 12px;
+  }
+  :global(.account-dialog) .el-table .el-button {
+    padding: 0 3px;
+  }
+  .target-row { flex-direction: column; }
+}
+
+/* 弹窗遮罩层：移动端去掉默认内边距，让弹窗真正铺满 */
+:global(.account-dialog-overlay) {
+  padding: 0 !important;
+}
 </style>

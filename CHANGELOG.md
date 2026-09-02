@@ -2,6 +2,25 @@
 
 本文件遵循 [语义化版本 2.0.0](https://semver.org/lang/zh-CN/)（`主.次.修订`），并遵循 `VERSIONING.md` 的提交/发版/打 Tag 规范。新版本区块一律从顶部追加，不在历史版本上编辑。
 
+## [1.5.0] - 2026-09-03
+
+### ✨ 新增
+
+- **Android 客户端**：新增 Android 原生应用（Kotlin + Chaquopy 嵌入 Python 后端），支持 WebView 登录、归档浏览、媒体查看
+- **登录入口迁移**：账号管理入口从导航栏/顶栏移动到「设置」页面，统一账号管理
+
+### 🐛 修复
+
+- **用户头像不显示**：`_avatar_url` 增加本地文件兜底检查，`avatar_local` 未写入数据库时也能正确返回本地头像地址
+- **Android 环境检测**：`is_android()` 增加 Chaquopy 检测（`sys.platform=linux` 时检查 `java` 模块），确保 Android 端走原生 WebView 登录
+
+## [1.4.1] - 2026-09-02
+
+### 🐛 修复
+
+- **Android 登录态识别**：登录校验、UID/昵称解析、Token 刷新由 `m.weibo.cn` 切换为 `weibo.com`（首页 `$CONFIG` + `ajax/profile/info`）。修复 WebView 登录后 Cookie 在 `m.weibo.cn/api/config` 返回 `login:false`、导致归档任务「无法解析登录 UID」的问题
+- **长文与用户信息获取**：`fetch_long_text` 改用 `weibo.com/ajax/statuses/longtext`，`fetch_and_save_profile` 改用 `weibo.com/ajax/profile/info`，与抓取主链路保持一致
+
 ## [1.4.0] - 2026-09-02
 
 ### ✨ 新增

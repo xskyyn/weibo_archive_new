@@ -1,0 +1,82 @@
+plugins {
+    id("com.android.application")
+    id("com.chaquo.python")
+    id("org.jetbrains.kotlin.android")
+}
+
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    namespace = "com.weiboarchive"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.weiboarchive"
+        minSdk = 24
+        targetSdk = 35
+        versionCode = 141
+        versionName = "1.4.1"
+        ndk {
+            abiFilters += ["arm64-v8a"]
+        }
+    }
+
+    signingConfigs {
+        release {
+            storeFile rootProject.file(keystoreProperties["storeFile"])
+            storePassword keystoreProperties["storePassword"]
+            keyAlias keystoreProperties["keyAlias"]
+            keyPassword keystoreProperties["keyPassword"]
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+        debug {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        // 3.12：greenlet 在 Chaquopy 仓库仅有 cp312 预编译 wheel（SQLAlchemy async 依赖）
+        version "3.12"
+        pip {
+            // 清华镜像直连（避免 pypi.org 走不稳定系统代理）+ Chaquopy 原生仓库（greenlet 等预编译 wheel）
+            options("--index-url", "https://pypi.tuna.tsinghua.edu.cn/simple")
+            options("--extra-index-url", "https://chaquo.com/pypi-13.1")
+            install "-r", "requirements-android.txt"
+        }
+    }
+}
+
+dependencies {
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.webkit:webkit:1.11.0")
+    implementation("androidx.activity:activity-ktx:1.9.3")
+}
