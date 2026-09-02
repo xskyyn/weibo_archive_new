@@ -1,6 +1,7 @@
 """微博数据查询、搜索、分页与统计。"""
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import List
 
@@ -126,16 +127,23 @@ async def list_posts(
     month: int | None = Query(None),
     has_media: bool | None = Query(None),
     has_video: bool | None = Query(None),
+    on_this_day: bool | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    """分页查询本人微博（is_own=True），支持年份、月份、媒体筛选。"""
+    """分页查询本人微博（is_own=True），支持年份、月份、媒体筛选、往年今日。"""
     filters = [Post.is_own == True]  # noqa: E712
-    if year:
-        filters.append(func.strftime("%Y", Post.created_at) == str(year))
-    if month:
-        filters.append(func.strftime("%m", Post.created_at) == f"{month:02d}")
+    if on_this_day:
+        # 往年今日：同月同日、且非今年的微博
+        today = date.today()
+        filters.append(func.strftime("%m-%d", Post.created_at) == today.strftime("%m-%d"))
+        filters.append(func.strftime("%Y", Post.created_at) != str(today.year))
+    else:
+        if year:
+            filters.append(func.strftime("%Y", Post.created_at) == str(year))
+        if month:
+            filters.append(func.strftime("%m", Post.created_at) == f"{month:02d}")
 
     base = select(Post).filter(*filters)
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar()
@@ -199,15 +207,17 @@ async def list_media(
     page: int = Query(1, ge=1),
     page_size: int = Query(60, ge=1, le=200),
     mtype: str | None = Query(None),
+    order: str = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ):
-    """媒体时光轴数据（仅本人微博附带媒体）。"""
+    """媒体时光轴数据（仅本人微博附带媒体），支持倒序/正序。"""
     stmt = select(Media).join(Post, Post.id == Media.post_id).where(Post.is_own == True).options(selectinload(Media.post))  # noqa: E712
     if mtype:
         stmt = stmt.where(Media.type == mtype)
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar()
+    order_col = Media.id.asc() if order == "asc" else Media.id.desc()
     result = await db.execute(
-        stmt.order_by(Media.id.desc()).limit(page_size).offset((page - 1) * page_size)
+        stmt.order_by(order_col).limit(page_size).offset((page - 1) * page_size)
     )
     medias = list(result.scalars().all())
     items = []

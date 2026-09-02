@@ -1,11 +1,17 @@
 <template>
   <div>
     <el-card shadow="never" class="toolbar">
-      <el-radio-group v-model="mtype" @change="load">
-        <el-radio-button value="">全部</el-radio-button>
-        <el-radio-button value="pic">图片</el-radio-button>
-        <el-radio-button value="video">视频</el-radio-button>
-      </el-radio-group>
+      <div class="toolbar-row">
+        <el-radio-group v-model="mtype" @change="load">
+          <el-radio-button value="">全部</el-radio-button>
+          <el-radio-button value="pic">图片</el-radio-button>
+          <el-radio-button value="video">视频</el-radio-button>
+        </el-radio-group>
+        <el-radio-group v-model="order" @change="load">
+          <el-radio-button value="desc">倒序</el-radio-button>
+          <el-radio-button value="asc">正序</el-radio-button>
+        </el-radio-group>
+      </div>
     </el-card>
 
     <div class="waterfall">
@@ -37,6 +43,7 @@ interface MediaRow {
 }
 
 const mtype = ref('')
+const order = ref('desc')
 const items = ref<MediaRow[]>([])
 const page = ref(1)
 const pageSize = 60
@@ -57,7 +64,7 @@ async function load() {
   items.value = []
   loading.value = true
   try {
-    const r = await getMedia({ page: 1, page_size: pageSize, mtype: mtype.value || undefined })
+    const r = await getMedia({ page: 1, page_size: pageSize, mtype: mtype.value || undefined, order: order.value })
     items.value = r.items
     total.value = r.total
     buildPreviewList()
@@ -71,7 +78,7 @@ async function loadMore() {
   page.value += 1
   loading.value = true
   try {
-    const r = await getMedia({ page: page.value, page_size: pageSize, mtype: mtype.value || undefined })
+    const r = await getMedia({ page: page.value, page_size: pageSize, mtype: mtype.value || undefined, order: order.value })
     items.value.push(...r.items)
     buildPreviewList()
   } finally {
@@ -91,6 +98,7 @@ onMounted(load)
 
 <style scoped>
 .toolbar { margin-bottom: 16px; }
+.toolbar-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .waterfall { columns: 5 180px; column-gap: 12px; }
 .cell { break-inside: avoid; background: #fff; border-radius: 8px; overflow: hidden; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); cursor: pointer; }
 .thumb { width: 100%; display: block; background: #eee; }
