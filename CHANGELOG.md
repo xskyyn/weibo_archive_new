@@ -2,6 +2,29 @@
 
 本文件遵循 [语义化版本 2.0.0](https://semver.org/lang/zh-CN/)（`主.次.修订`），并遵循 `VERSIONING.md` 的提交/发版/打 Tag 规范。新版本区块一律从顶部追加，不在历史版本上编辑。
 
+## [1.3.0] - 2026-09-02
+
+### 🚀 新功能
+
+- **安装目录可自选**：Inno Setup 安装包显式开启目录选择页（`DisableDirPage=no`），用户可在向导中自由选择安装位置（默认 `%LOCALAPPDATA%\Programs\WeiboArchive`，无需管理员权限）
+- **数据目录可配置**：新增「设置」页（侧栏入口），可查看/修改数据文件存放位置
+  - 数据目录涵盖数据库、图片、视频、导出文件等全部运行时数据
+  - 后端新增 `GET/PUT /api/settings/workspace`（读取/保存数据目录）、`POST /api/settings/pick-dir`（系统目录选择对话框）、`POST /api/settings/restart`（重启应用）
+  - 设置持久化到独立于数据目录的 `settings.json`（打包版位于 `%APPDATA%\WeiboArchive\settings.json`），切换数据目录后设置不丢失
+  - 保存新目录后自动重启应用生效（桌面壳检测重启标志并 `os.execv` 重启）
+
+### 🔧 技术变更
+
+- `backend/config.py`：新增 `SETTINGS_FILE` 与设置读写（`get_settings`/`save_workspace_dir`）、重启标志（`request_restart`/`consume_restart_flag`）；数据目录优先级调整为「环境变量 > 设置文件 > 默认」
+- `backend/routers/settings.py`：新增设置路由
+- `backend/desktop.py`：窗口关闭后检测重启标志并自动重启
+- `frontend/src/views/SettingsView.vue`：新增设置页（数据目录输入/浏览/保存重启）
+- `WeiboArchive.iss`：`DisableDirPage=no` 开启安装目录选择
+
+### 📝 关键经验
+
+- 数据目录是模块级常量（`WORKSPACE_DIR`），运行时不可热切换，变更后必须重启进程；重启标志写入独立文件，由桌面壳在退出时检测并 `os.execv` 拉起新进程
+
 ## [1.2.0] - 2026-09-02
 
 ### 🚀 新功能
