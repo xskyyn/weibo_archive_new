@@ -15,6 +15,7 @@ from backend.database import (
     AsyncSessionLocal, Comment, Post, User, func, select, set_db_target,
 )
 from backend.scraper.client import (
+    WeiboAuthError,
     WeiboCaptchaError,
     WeiboClient,
     WeiboRateLimitError,

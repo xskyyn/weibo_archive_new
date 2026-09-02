@@ -1,10 +1,10 @@
 ; ============================================================
 ;  WeiboArchive 微博归档工具 - Windows 一键安装包 (Inno Setup 6)
 ;  编译: tools\innosetup\ISCC.exe WeiboArchive.iss
-;  产物: dist\WeiboArchive-Setup-1.3.0.exe
+;  产物: dist\WeiboArchive-Setup-1.3.1.exe
 ; ============================================================
 #define MyAppName "WeiboArchive 微博归档工具"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.3.1"
 #define MyAppExeName "WeiboArchive.exe"
 #define MyAppPublisher "WeiboArchive"
 
