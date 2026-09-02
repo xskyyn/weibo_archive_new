@@ -82,6 +82,9 @@ class Post(Base):
     # 是否属于本人发布（False 表示被递归保存的"转发他人内容"原博）
     is_own: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
 
+    # 发布位置（如"发布于 北京"）
+    region_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
     # 专为 FTS5 预处理后的分词结果
     search_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     raw_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -208,6 +211,10 @@ async def init_db() -> None:
         init_engine()
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # 轻量迁移：为已存在的库补充新增列（create_all 不会改已有表）
+        cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(posts)"))).fetchall()}
+        if "region_name" not in cols:
+            await conn.execute(text("ALTER TABLE posts ADD COLUMN region_name VARCHAR(100)"))
         # 显式执行 FTS5 虚拟表与触发器（保证在已存在的库上也能生效）
         for stmt in _split_statements(FTS5_SETUP_SQL):
             await conn.execute(text(stmt))

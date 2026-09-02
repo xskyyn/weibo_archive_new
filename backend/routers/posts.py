@@ -62,6 +62,7 @@ def _post_to_dict(p: Post) -> dict:
         "reposts_count": p.reposts_count,
         "comments_count": p.comments_count,
         "attitudes_count": p.attitudes_count,
+        "region_name": p.region_name,
         "retweeted_status_id": p.retweeted_status_id,
         "user": {
             "id": p.user.id if p.user else None,

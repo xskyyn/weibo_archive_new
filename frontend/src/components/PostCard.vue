@@ -6,7 +6,10 @@
       </el-avatar>
       <div class="info">
         <div class="name">{{ post.user.screen_name || '未知用户' }}</div>
-        <div class="time">{{ fmtTime }}</div>
+        <div class="time">
+          {{ fmtTime }}
+          <span v-if="post.region_name" class="region">{{ post.region_name }}</span>
+        </div>
       </div>
     </div>
 
@@ -87,6 +90,7 @@ function linkify(text: string): string {
 .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .name { font-weight: 600; }
 .time { color: #9ca3af; font-size: 12px; }
+.region { color: #6b7280; margin-left: 6px; font-size: 12px; }
 .text { line-height: 1.7; word-break: break-word; }
 .media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .pic { width: 160px; height: 160px; border-radius: 8px; object-fit: cover; background: #f3f4f6; }

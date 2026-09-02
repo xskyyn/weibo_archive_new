@@ -1,7 +1,9 @@
 """微博脏数据解析与入库：用户、微博、长文、媒体、评论树。"""
 from __future__ import annotations
 
+import ast
 import hashlib
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -9,6 +11,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.database import Comment, Media, Post, User, clean_and_tokenize
 from backend.scraper.client import WeiboClient, WeiboRateLimitError
@@ -62,6 +65,41 @@ def parse_weibo_time(time_str: Optional[str]) -> datetime:
     return now
 
 
+def _parse_raw_json(raw_json: str) -> Optional[Dict[str, Any]]:
+    """解析库中 raw_json（可能是 JSON 或 Python repr 两种历史格式）。"""
+    if not raw_json:
+        return None
+    try:
+        return json.loads(raw_json)
+    except (ValueError, TypeError):
+        pass
+    try:
+        value = ast.literal_eval(raw_json)
+        return value if isinstance(value, dict) else None
+    except (ValueError, SyntaxError):
+        return None
+
+
+def _pick_video_url(data: Dict[str, Any]) -> str:
+    """从视频 data 中挑选最高清晰度可用的 mp4 地址（playback_list 优先）。"""
+    media_info = data.get("media_info") or {}
+    playback = media_info.get("playback_list") or data.get("playback_list") or []
+    for item in playback:
+        info = item.get("play_info") or {}
+        url = info.get("url") or ""
+        mime = (info.get("mime") or "").lower()
+        if url and ("mp4" in mime or "video" in mime):
+            return url
+    return (
+        media_info.get("mp4_720p_mp4")
+        or media_info.get("mp4_hd_url")
+        or media_info.get("mp4_sd_url")
+        or media_info.get("stream_url")
+        or media_info.get("stream_url_hd")
+        or ""
+    )
+
+
 def build_media_urls(raw_post: Dict[str, Any]) -> List[Dict[str, Any]]:
     """从原始微博 JSON 中提取媒体 URL 列表。返回 [{type, url, ext}]。"""
     medias: List[Dict[str, Any]] = []
@@ -95,7 +133,29 @@ def build_media_urls(raw_post: Dict[str, Any]) -> List[Dict[str, Any]]:
         )
         if video_url:
             medias.append({"type": "video", "url": video_url, "ext": "mp4"})
-    return medias
+
+    # 新版混合媒体：mix_media_info.items（视频 / livephoto）
+    mix_items = (raw_post.get("mix_media_info") or {}).get("items") or []
+    for item in mix_items:
+        data = item.get("data") or {}
+        if item.get("type") == "video":
+            video_url = _pick_video_url(data)
+            if video_url:
+                medias.append({"type": "video", "url": video_url, "ext": "mp4"})
+        elif item.get("type") == "pic" and data.get("type") == "livephoto":
+            live_url = data.get("video") or ""
+            if live_url:
+                medias.append({"type": "livephoto", "url": live_url, "ext": "mov"})
+
+    # 按 URL 去重，避免同一媒体被多段逻辑重复提取
+    seen: set[str] = set()
+    unique: List[Dict[str, Any]] = []
+    for m in medias:
+        if m["url"] in seen:
+            continue
+        seen.add(m["url"])
+        unique.append(m)
+    return unique
 
 
 class WeiboParser:
@@ -191,6 +251,7 @@ class WeiboParser:
             created_at=parse_weibo_time(raw_post.get("created_at")),
             text=text_content,
             raw_html=raw_post.get("text") or "",
+            region_name=raw_post.get("region_name") or None,
             reposts_count=raw_post.get("reposts_count", 0),
             comments_count=raw_post.get("comments_count", 0),
             attitudes_count=raw_post.get("attitudes_count", 0),
@@ -205,6 +266,35 @@ class WeiboParser:
         db.add(post)
         logger.info("解析成功 %s", mid)
         return post
+
+    async def backfill_missing_fields(self, db: AsyncSession) -> int:
+        """为已入库微博补齐缺失数据（旧版未解析出的视频等媒体 + 发布位置）。返回新增媒体数。"""
+        posts = (
+            await db.execute(select(Post).options(selectinload(Post.media)))
+        ).scalars().all()
+        added = 0
+        for post in posts:
+            if not post.raw_json:
+                continue
+            raw = _parse_raw_json(post.raw_json)
+            if not raw:
+                continue
+            # 补齐发布位置
+            if not post.region_name:
+                region = raw.get("region_name") or None
+                if region:
+                    post.region_name = region
+            # 补齐缺失媒体
+            existing_urls = {m.url for m in post.media}
+            for m in build_media_urls(raw):
+                if m["url"] in existing_urls:
+                    continue
+                db.add(Media(post_id=post.id, type=m["type"], url=m["url"], ext=m["ext"]))
+                existing_urls.add(m["url"])
+                added += 1
+        if added:
+            logger.info("媒体补齐：新增 %d 条记录", added)
+        return added
 
     # -- 评论树 (weibo.com buildComments) --------------------------------
     async def _save_comment(

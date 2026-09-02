@@ -293,6 +293,14 @@ class ArchiveTaskManager:
                 n_avatar = await downloader.download_avatars(limit=10000)
                 await self.log(f"✅ 头像下载完成，新增 {n_avatar} 个。")
 
+            # 媒体补齐：为历史微博补抓缺失媒体（如旧版未解析出的视频）
+            if not self._stop_event.is_set():
+                async with AsyncSessionLocal() as db:
+                    n_backfill = await parser.backfill_missing_fields(db)
+                    await db.commit()
+                if n_backfill:
+                    await self.log(f"🎬 媒体补齐完成，新增 {n_backfill} 个媒体记录。")
+
             # 后台补充：媒体下载（含转发的原博图片）
             if not self._stop_event.is_set():
                 await self.log("📦 开始下载媒体文件…")

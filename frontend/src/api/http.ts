@@ -27,6 +27,7 @@ export interface PostItem {
   reposts_count: number
   comments_count: number
   attitudes_count: number
+  region_name?: string | null
   retweeted_status_id?: number | null
   user: { id: number | null; screen_name: string; profile_image_url?: string }
   media: MediaItem[]

@@ -53,11 +53,17 @@ class MediaDownloader:
                     if ext == "mp4":
                         ok = await self.client.download_file(media.url, target)
                     else:
-                        # 特殊封装走 ffmpeg 转 mp4
+                        # 特殊封装走 ffmpeg 转 mp4（先下载到本地再转，兼容无网络协议的 ffmpeg）
                         if not ffmpeg_available():
                             logger.warning("未检测到 ffmpeg，跳过特殊视频封装: %s", media.url)
                             return
-                        ok = await self._ffmpeg_remux(media.url, target)
+                        src_tmp = target.with_suffix(target.suffix + ".src")
+                        if await self.client.download_file(media.url, src_tmp):
+                            ok = await self._ffmpeg_remux(src_tmp, target)
+                            if src_tmp.exists():
+                                src_tmp.unlink()
+                        else:
+                            ok = False
                 else:
                     ok = await self.client.download_file(media.url, target)
 
@@ -72,9 +78,9 @@ class MediaDownloader:
                 logger.error("媒体下载失败 id=%s: %s", media.id, e)
 
     @staticmethod
-    async def _ffmpeg_remux(url: str, target: Path) -> bool:
+    async def _ffmpeg_remux(src: Path, target: Path) -> bool:
         cmd = [
-            "ffmpeg", "-y", "-i", url,
+            "ffmpeg", "-y", "-i", str(src),
             "-c", "copy", "-bsf:a", "aac_adtstoasc", str(target),
         ]
         try:
