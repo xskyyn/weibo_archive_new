@@ -120,13 +120,19 @@ def build_media_urls(raw_post: Dict[str, Any]) -> List[Dict[str, Any]]:
         medias.append({"type": "pic", "url": url, "ext": "jpg"})
 
     page_info = raw_post.get("page_info", {}) or {}
-    if page_info.get("type") == "video":
+    pi_type = str(page_info.get("type") or "")
+    pi_obj = page_info.get("object_type") or ""
+    # 视频卡片：type 可能是 "video"（新版）或 "11"（旧版字符串），object_type 统一为 "video"
+    if pi_type in ("video", "11") or pi_obj == "video":
         urls = page_info.get("urls") or {}
         media_info = page_info.get("media_info") or {}
         video_url = (
             urls.get("mp4_720p_mp4")
             or urls.get("mp4_hd_url")
             or urls.get("mp4_ld_mp4")
+            or media_info.get("mp4_720p_mp4")
+            or media_info.get("mp4_hd_url")
+            or media_info.get("mp4_sd_url")
             or media_info.get("stream_url")
             or media_info.get("h264_mp4")
             or ""

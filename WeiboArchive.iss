@@ -4,7 +4,7 @@
 ;  产物: dist\WeiboArchive-Setup-1.4.0.exe
 ; ============================================================
 #define MyAppName "WeiboArchive 微博归档工具"
-#define MyAppVersion "1.4.0"
+#define MyAppVersion "1.6.0"
 #define MyAppExeName "WeiboArchive.exe"
 #define MyAppPublisher "WeiboArchive"
 
